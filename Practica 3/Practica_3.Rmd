@@ -1,0 +1,742 @@
+---
+title: "Práctica 3.  Introducción a los mercados financieros"
+subtitle: "Métodos Estadísticos para Finanzas y Seguros"
+author: "Alex Carrillo Alza"
+date: "22 de diciembre de 2020"
+output:
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float:
+      collapsed: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_libraries, include=FALSE}
+library(quantmod)
+library(e1071)
+library(TTR)
+library(MTS)
+library("fGarch")
+library("tseries")
+```
+
+Para la resolución de esta actividad se solicita **seleccionar dos empresas a elegir por el alumno** (no podrá seleccionarse ninguna de las empresas analizadas en clase: AAPL, TEF, SAN, MSFT y BBVA).
+
+Se pide elaborar un informe con un análisis de rentabilidad y riesgo de ambas empresas. ¿Qué empresa parece más interesante para invertir, atendiendo a los resultados de rentabilidad-riesgo?
+
+Deberán seguirse los siguientes pasos:
+
+a\) **Descargar** mediante la rutina de carga de datos de Yahoo Finance la **serie de precios** de la acción de ambas empresas. Se deja a decisión del alumno la **profundidad** histórica seleccionada, profundidad que deberá ser **justificada**.
+
+b\) **Análisis de las rentabilidades** observadas. Deberá realizarse un análisis descriptivo de las rentabilidades observadas en ambas empresas. El análisis, como mínimo, deberá recoger:
+
+- Análisis gráfico de las rentabilidades.
+- Análisis descriptivo de las rentabilidades.
+- Analizar si las rentabilidades obtenidas a lo largo del tiempo son constantes.
+
+c\) **Análisis del riesgo** de ambas empresas. Deberá realizarse un análisis del riesgo observado de ambas empresas, tanto de la volatilidad histórica como de la volatilidad condicionada. Este análisis deberá incluir, como mínimo, las siguientes cuestiones:
+
+- Obtener para cada una de las empresas un estimador de volatilidad histórica para una ventana de datos móvil de 5 y de 20 días.
+- Análisis de autocorrelaciones de las rentabilidades y rentabilidades al cuadrado, determinando qué modelo de volatilidad condicional podría ajustarse mejor a los datos.
+- Ajuste de un modelo de volatilidad condicional que permita expresar la volatilidad presente en función de la volatilidad pasada.
+- Realizar estimaciones de las volatilidades futuras.
+
+# 1. Introducción
+
+En este trabajo se realizará un informe analizando la rentabilidad y el riesgo de **Walmart (WMT)**, la corporación multinacional de tiendas de grandes superfícies de origen estadounidense, e **Iberdrola (IBDRY)** el grupo empresarial español dedicado a la producción, distribución y comercialización de energia.
+
+La razón por la que se ha elegido estas dos empresas tan distintas es para dar una mayor variedad a las conclusiones del análisis tanto a nivel de sector (*supermercados* vs. *energia*) como a nivel de mercados (la *Bolsa de Nueva York, NYSE* vs. el *índice bursátil español IBEX 35*).
+
+## 1.1. Series de datos
+
+Para obtener un número de datos suficientemente grandes para el análisis y estimaciones futuras, nos remontamos al inicio del año 2010 (2010-01-04) donde ambas empresas disponen de datos hasta la fecha de mediados de diciembre de 2020 (2020-12-18): prácticamente **11 años** de datos.
+
+```{r warning=FALSE, message=F, results='hide'}
+getSymbols("WMT", from = "2010-01-01", to = "2020-12-20")
+getSymbols("IBDRY", from = "2010-01-01", to = "2020-12-20")
+```
+
+Comprobamos que ambas series tienen la misma longitud: **`r nrow(WMT)`** muestras para Walmart (WMT) y **`r nrow(IBDRY)`** muestras para Iberdrola (IBDRY). Y mostramos la primera y última muestra de cada secuencia:
+
+```{r}
+WMT[c(1,nrow(WMT)),]
+IBDRY[c(1,nrow(IBDRY)),]
+```
+
+## 1.2. Precio de las acciones
+
+A continuación, visualizamos el precio de cierre de ambas series y describimos su evolución.
+
+```{r}
+chartSeries(WMT[,4], type = "lines", theme = "white")  # CLOSE price Walmart (WMT)
+```
+
+El precio de las acciones de Walmart en la última década ha seguido una tendencia alcista, desde un precio inicial de unos 50 dolares hasta un valor alrededor de los 150 dolares en la actualidad, con algunas bajadas notables en 2015 y 2018 durante su evolución.
+
+```{r}
+chartSeries(IBDRY[,4], type = "lines", theme = "white")  # CLOSE price Iberdrola (IBDRY)
+```
+
+Sin embargo, el precio de las acciones de Iberdrola no muestra una tendencia alcista clara hasta el año 2019; destacan fuertes caídas durante el 2010 y 2011, y un precio más o menos mantenido durante los años 2014 y 2019. Además, destacamos que la magnitud del precio es sustancialmente inferior a la de Walmart, con precios iniciales de unos 40 euros hasta un precio actual de 55 euros.
+
+## 1.3. Índices bursátiles
+
+Adicionalmente, mostramos el mismo precio de cierre anterior con un número índice. Como no tenemos preferencia por seleccionar ningún día particular en la serie, tomaremos el primer valor de la secuencia correspondiente al 2020-01-04 para ambas series.
+
+```{r}
+t_base <- as.numeric(WMT[1,4])  # 1er "CLOSE" de la serie.
+indice_bursatil <- WMT[,4] / t_base
+chartSeries(indice_bursatil, type = "lines", theme = "white")
+```
+
+Como esperábamos, el gráfico tiene la misma forma que el anterior pero ahora el eje muestra el valor por el que se ha multiplicado el precio de la acción de Walmart a lo largo de los años. Es decir, se confirma la tendencia alcista llegando actualmente a multiplicar por 3 el valor de la acción.
+
+
+```{r}
+t_base <- as.numeric(IBDRY[1,4])  # 1er "CLOSE" de la serie.
+indice_bursatil <- IBDRY[,4] / t_base
+chartSeries(indice_bursatil, type = "lines", theme = "white")
+```
+
+De manera analoga, vemos que en el caso de Iberdrola el precio de la acción llegó a valer casi la mitad a mediados de 2012 y se ha llegado a multiplicar por 1.5 en la actualidad, en referencia al inicio de 2010 (valor índice).
+
+## 1.4. Análisi descriptivo
+
+Por último, en relación al precio de las acciones, calculamos algunas métricas descriptivas a tener en cuenta:
+
+```{r}
+precio_WMT <- as.numeric(WMT[,4])      # close
+precio_IBDRY <- as.numeric(IBDRY[,4])  # close
+
+summary(precio_WMT)    # WMT
+summary(precio_IBDRY)  # IBDRY
+
+sd(precio_WMT)
+sd(precio_IBDRY)
+```
+
+Los valores extremos que obtenemos son los mismos comentados anteriormente: 48 - 153 USD en el caso de Walmart, y 13 - 56 EUR en el caso de Iberdrola, con un precio medio de la acción de 80 y 30, respectivamente. Además, tal y como esperábamos, la desviación estándard de Walmart, 22.5, es mayor en comparación con la de Iberdrola, 7.5.
+
+```{r}
+par(mfrow = c(1,2))
+boxplot(precio_WMT, main = "WMT close price")
+boxplot(precio_IBDRY, main = "IBDRY close price")
+```
+
+Pese a haber una fuerte concentración de outliers en los extremos (debido a que el mercado exagera), los valores que obtenemos para mínimos, máximos y medias son los que hemos descrito anteriormente en los gráficos.
+
+# 2. Análisis de las rentabilidades
+
+En este apartado nos enfocamos en las rentabilidades diarias de cada empresa y analizamos qué comportamiento han tenido.
+
+## 2.1. Análisis gráfico
+
+Primeramente, dibujamos el gráfico de los **rendimientos diarios absolutos** del precio de la acción, $r_i = P_i - P_{i-1}$:
+
+```{r}
+r_WMT <- diff(WMT[,4])[-1]
+chartSeries(r_WMT, type="lines", theme = "white")
+```
+
+Para Walmart, lo primero que notamos es que las rentabilidades obtenidas a lo largo del tiempo no son constantes y claramente muestran una baja dispersión de variabilidad durante los primeros años y una gran dispersión de variabilidad a medida que nos acercamos a 2020. Además, se pueden observar ciertos picos que probablemente se deban a hechos que desencadenaron exageraciones en el mercado.
+
+Por lo tanto, para el caso de Walmart, trabajaremos con los **rendimientos diarios relativos logarítmicos** del precio de la acción, $r_i = ln(\frac{P_i}{P_{i-1}})$:
+
+```{r}
+rLOG_WMT <- diff(log(WMT[,4]))[-1]
+chartSeries(rLOG_WMT, type="lines", theme = "white")
+```
+
+De este modo, hemos dado consistencia a la variancia y se observa la misma dispersión a lo largo de los años. En esta rentabilidad en escala logarítmica, la media es aproximadamente 0 y vemos momentos menos volátiles seguidos de momentos muy volátiles.
+
+Para el caso de Iberdrola, dibujamos los **rendimientos diarios absolutos** del precio de la acción, $r_i = P_i - P_{i-1}$:
+
+```{r}
+r_IBDRY <- diff(IBDRY[,4])[-1]
+chartSeries(r_IBDRY, type="lines", theme = "white")
+```
+
+A diferencia de la serie de Walmart, Iberdrola no muestra una alta dispersión de variabilidad en la serie y por lo tanto, en un principio sí que podríamos afirmar que las rentabilidad obtenidas a lo largo del tiempo sí son constantes. Hay que destacar que sí que se observa una ligera diferencia en los primeros años (2010-2012 y 2020) respecto a los años centrales (2013-2019), siendo estos últimos los que tienen menor dispersión.
+
+De todos modos, procedemos a calcular los **rendimientos diarios relativos logarítmicos** del precio de la acción, $r_i = ln(\frac{P_i}{P_{i-1}})$. Todo y que quizá parezca que para esta serie no sea necesario calcularlos, más adelante veremos que nos ayudan a tener una media más cercana a 0.
+
+```{r}
+rLOG_IBDRY <- diff(log(IBDRY[,4]))[-1]
+chartSeries(rLOG_IBDRY, type="lines", theme = "white")
+```
+
+De nuevo, ahora vemos en el gráfico que la variancia es ligeramente más consistente a lo largo de los años.
+
+```{r}
+rLOG_WMT <- as.numeric(rLOG_WMT)
+rLOG_IBDRY <- as.numeric(rLOG_IBDRY)
+
+par(mfrow = c(1,2))
+boxplot(rLOG_WMT, main = "rLOG WMT")
+boxplot(rLOG_IBDRY, main = "rLOG IBDRY")
+```
+
+En los boxplots podemos ver que hay bastantes valores outliers, hecho que es característico de las rentabilidades bursátiles, es decir, las "fat tails": valores extremos por encima de lo esperado sobre una distribución normal.
+
+## 2.1. Análisis descriptivo
+
+A continuación, calculamos algunas medidas de posición y dispersión de las rentabilidades anteriores e interpretamos los resultados. En concreto, analizamos las rentabilidades relativas logarítmicas que son las que usaremos a lo largo del informe por las razones descritas anteriormente.
+
+```{r}
+summary(rLOG_WMT)
+summary(rLOG_IBDRY)
+```
+
+La discripción de estos datos nos dan una idea de cuáles han sido las variaciones diarias máximas y mínimas de las series. Sin embargo, para interpretar mejor qué significan estos valores máximos y mínimos del summary, deshacemos el logarítmo y el valor del número índice, tal que así:
+
+```{r}
+exp(summary(rLOG_WMT)) - 1
+exp(summary(rLOG_IBDRY)) - 1
+```
+
+Estos nuevos valores calculados sí expresan el porcentaje mínimo o máximo que se ha llegado a perder en un día (de un día para otro). En este caso, para Walmart, lo **mínimo** que se ha llegado a perder en un día ha sido un **10%** y el **máximo** un **11%**. Para el caso de Iberdrola, lo **mínimo** que se ha llegado a perder en un día ha sido alrededor de un **15%** y el **máximo** un **14%**.
+
+A continuación, calculamos en qué días se producieron estos mínimos y máximos en la serie:
+
+```{r}
+rLOG_WMT <- diff(log(WMT[,4]))[-1]   # volvemos a calcular para quitar el "as.numeric()" !
+rLOG_WMT[rLOG_WMT==min(rLOG_WMT)]
+rLOG_WMT[rLOG_WMT==max(rLOG_WMT)]
+
+rLOG_IBDRY <- diff(log(IBDRY[,4]))[-1]
+rLOG_IBDRY[rLOG_IBDRY==min(rLOG_IBDRY)]
+rLOG_IBDRY[rLOG_IBDRY==max(rLOG_IBDRY)]
+```
+
+Adicionalmente, calculamos la desviación típica (como medida de dispersión), la asimetría y la curstosis:
+
+```{r}
+cat("Walmart (WMT)",
+    "\nDesviación típica:", sd(rLOG_WMT),
+    "\nAsimetría:", skewness(rLOG_WMT, na.rm = FALSE, type = 1),
+    "\nCurtosis:", kurtosis(rLOG_WMT, na.rm = TRUE))
+```
+
+Tal y como hemos expresado anteriormente, debido al efecto de las "fat tails", esperamos un exceso de curtosis y cierta asimetria hacia las colas.
+
+En el caso de Walmart, la simetria es positiva hacia la derecha de la media, lo que indica ganancias. Esto lo podemos observar también en el summary hecho anteriormente: el valor máximo supera ligeramente el valor mínimo en las rentabilidades.
+
+Por otro lado, la curtosis indica el apuntamiento de los datos y podemos saber cómo de probable es la mediana en este caso. Sabemos que como referencia tenemos el valor 3. En este caso, el valor de 16 nos indica que tenemos mucha curtosis, es decir, tiene mucho apuntamiento la distribución de la rentabilidad.
+
+```{r}
+cat("Iberdrola (IBDRY)",
+    "\nDesviación típica:", sd(rLOG_IBDRY),
+    "\nAsimetría:", skewness(rLOG_IBDRY, na.rm = FALSE, type = 1),
+    "\nCurtosis:", kurtosis(rLOG_IBDRY, na.rm = TRUE))
+```
+
+Para el caso de Iberdrola, la simetria es negativa hacia la izquierda de la media, lo que indica perdidas. Igualmente, esta simetria ya la veíamos en el summary, donde el valor mínimo supera notablemente el valor máximo en las rentabilidades.
+
+En cuanto a la curtosis, en este caso observamos que el apuntamiento no es tan pronunciado como en el caso de Walmart ya que tenemos un valor de 8. Aún así, tenemos una curtosis suficiente alta para notar cierto apuntamiento en la distribución de la rentabilidad.
+
+A modo ilustrativo, a continuación mostramos dichas distribuciones de la rentabilidad para justificar los valores descritos anteriormente:
+
+```{r}
+hist(rLOG_WMT, col="grey", breaks="FD",main="rLOG WMT", xlab="Rentabilidad",
+     ylab="Frecuencia",prob=TRUE)
+abline(v=mean(rLOG_WMT), col="red",lwd=3)
+```
+
+Para Walmart vemos una mayor cola a la derecha (simetria positiva) y un apuntamiento pronunciado en la distribución (alta curtosis, el eje Y toma valores de hasta 50).
+
+```{r}
+hist(rLOG_IBDRY, col="grey", breaks="FD",main="rLOG IBDRY", xlab="Rentabilidad",
+     ylab="Frecuencia",prob=TRUE)
+abline(v=mean(rLOG_IBDRY), col="red",lwd=3)
+```
+
+Para Iberdrola vemos una mayor cola a la izquierda (simetria negativa) y cierto apuntamiento en la distribución (curtosis no tan pronunciada como antes, el eje Y toma valores más bajos de hasta 35).
+
+# 3. Análisis del riesgo
+
+En este apartado nos enfocamos en el análisi del riesgo de cada empresa tanto en términos de volatilidad histórica como en términos de la volatilidad condicionada. Como ya vimos en clase, no existe correlación (ACF y PACF) en los precios, pero sí en la volatilidad; lo cual es útil para analizar el riesgo.
+
+## 3.1. Volatilidad histórica
+
+Para medir la volatilidad histórica del precio de la acción, es decir el riesgo o incertidumbre al cambio en los mercados, usamos la desviación típica como estimador, utilizando las rentabilidades diarias calculadas con los precios de cierre (close-close):
+
+$$
+\sigma = \sqrt{\frac{\sum_{i=1}^{N}(r_i - \overline{r})^2}{N}}
+$$
+
+```{r}
+ohlc_WMT <- WMT[,c("WMT.Open","WMT.High","WMT.Low","WMT.Close")]
+colnames(ohlc_WMT) <- c("Open","High","Low","Close")
+
+vClose_WMT <- volatility(ohlc_WMT, calc = "close", n = nrow(ohlc_WMT), N = 1)[nrow(ohlc_WMT)]
+vParkinson_WMT <- volatility(ohlc_WMT, calc = "parkinson", n = nrow(ohlc_WMT), N = 1)[nrow(ohlc_WMT)]
+vGarmanKlas_WMT <- volatility(ohlc_WMT, calc = "garman", n = nrow(ohlc_WMT), N = 1)[nrow(ohlc_WMT)]
+
+cat("Volatilidad (close-close):", vClose_WMT,
+    "\n      Desviación estándar:", sd(rLOG_WMT),
+    "\n  Volatilidad (Parkinson):", vParkinson_WMT,
+    "\nVolatilidad (Garman-Klas):", vGarmanKlas_WMT)
+```
+
+*(he detectado un error al generar el HTML con algunas librerias, y las volatilidades no se han vuelto a calcular correctamente pero los valores escritos en la explicación sí son correctos ya que fueron generados hace tiempo)
+
+Tal y como se puede observar en el caso de Walmart, la *volatilidad close-close* corresponde con exactamente la desviación típica, con un valor de aproximadamente 0.012. El inconveniente del calculo de esta volatilidad histórica es que no tiene en cuenta la volatilidad intradía. Es por eso que se suele utilizar la *medida de volatilidad de Parkinson* que tiene en cuenta la variación entre el precio máximo y el precio mínimo del día. De manera similar, la *medida de volatilidad de Garman-Klas* incorpora además los precios de apertura y cierra de la sesión del día, y en nuestro caso ambas volatilidades dan un valor ligeramente menor que en close-close: aproximadamente 0.010.
+
+```{r}
+ohlc_IBDRY <- IBDRY[,c("IBDRY.Open","IBDRY.High","IBDRY.Low","IBDRY.Close")]
+colnames(ohlc_IBDRY) <- c("Open","High","Low","Close")
+
+vClose_IBDRY <- volatility(ohlc_IBDRY, calc = "close", n = nrow(ohlc_IBDRY), N = 1)[nrow(ohlc_IBDRY)]
+vParkinson_IBDRY <- volatility(ohlc_IBDRY, calc = "parkinson", n = nrow(ohlc_IBDRY), N = 1)[nrow(ohlc_IBDRY)]
+vGarmanKlas_IBDRY <- volatility(ohlc_IBDRY, calc = "garman", n = nrow(ohlc_IBDRY), N = 1)[nrow(ohlc_IBDRY)]
+
+cat("Volatilidad (close-close):", vClose_IBDRY,
+    "\n      Desviación estándar:", sd(rLOG_IBDRY),
+    "\n  Volatilidad (Parkinson):", vParkinson_IBDRY,
+    "\nVolatilidad (Garman-Klas):", vGarmanKlas_IBDRY)
+```
+
+*(he detectado un error al generar el HTML con algunas librerias, y las volatilidades no se han vuelto a calcular correctamente pero los valores escritos en la explicación sí son correctos ya que fueron generados hace tiempo)
+
+En el caso de Iberdrola, obervamos una mayor volatilidad histórica con la medida close-close, llegando a un valor aproximado de 0.019. Si recordamos cómo se mostraba la serie cuando analizamos las rentabilidades, nos damos cuenta de que existía una mayor variación y dispersión en el período de los 11 años, a diferencia de Walmart. Sin embargo, en cuanto a las medidas de volatilidad de Parkinson y Garmna-Klas, ambas tienen un valor similar aproximado de 0.010, igual que en caso anterior.
+
+### 3.1.1. Ventanas móviles
+
+A continuación, obtenemos para cada una de las empresas un estimador de la volatilidad histórica para una ventana de de datos móvil de 5, 20 y 252 días. Recordemos que en el mundo bursátil las operaciones se realizan de lunes a viernes, con lo cual los periodos anteriores corresponden a una semana, un mes y un año, respectivamente.
+
+A modo ilustrativo, únicamente visualizaremos los últimos **762 valores** de la série de volatilidades para ver el efecto que tienen distintos tamaños de ventanas en el cálculo de la volatilidad histórica:
+
+```{r, warning=F}
+vClose5_WMT <- volatility(ohlc_WMT, calc = "close", N = 1, n = 5)
+vClose20_WMT <- volatility(ohlc_WMT, calc = "close", N = 1, n = 20)
+vClose252_WMT <- volatility(ohlc_WMT, calc = "close", N = 1, n = 120)
+
+t_vClose5_WMT <- as.numeric(vClose5_WMT[2000:nrow(ohlc_WMT),1])
+t_vClose20_WMT <- as.numeric(vClose20_WMT[2000:nrow(ohlc_WMT),1])
+t_vClose252_WMT <- as.numeric(vClose252_WMT[2000:nrow(ohlc_WMT),1])
+
+y_limit <- 0.11
+plot(t_vClose5_WMT, type = "l", col = "steelblue", main = "Volatilidad móvil N variable - WMT", ylab = "Volatilidad", ylim=c(0,y_limit))
+par(new=TRUE)
+plot(t_vClose20_WMT, type = "l", col = "red3", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "")
+par(new=TRUE)
+plot(t_vClose252_WMT, type = "l", col = "limegreen", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "")
+legend(x = "topleft", legend = c("5 días","20 días","252 días"), fill = c("steelblue","red3","limegreen"), title = "Núm. días")
+```
+
+Claramente, cuanto más pequeña sea la ventana temporal, los valores de la serie son más volatiles porque sólo depende de los últimos 5 días en los cuales si sube mucho vamos a tener picos y cuando baje mucho vamos a tener picos. Por lo tanto, un valor outiler nos afecta muchísimo más si tenemos una ventana de 5 días que si tenemos una ventana de 252 días (las cuales nos muestran una volatilidad más "estable").
+
+Es por eso que en el caso de Walmart, los picos que vemos se deben a eventos que desencadenaron una exageración en el mercado y en la serie de la volatilidad con una ventana de 5 días tienen un efecto muy grande y son visibles. A medida que usamo una ventana más pequeña, la de 20, el efecto es más pequeño y si comparamos con un efecto anual vemos una volatilidad más plana aunque de todas formas también reacciona a los cambios pero con un salto o escalón menor.
+
+Para decidir la ventana temporal, debemos de fijarnos en el tipo de inversión que queremos realizar: ventanas pequeñas para inversiiones a corto plazo (comprar y vender en pocos días, ser agresivo y detectar outilers) o ventanas más amplias para inversiones a medii-largo plazo (menos efecto de outliers).
+
+```{r, warning=F}
+vClose5_IBDRY <- volatility(ohlc_IBDRY, calc = "close", N = 1, n = 5)
+vClose20_IBDRY <- volatility(ohlc_IBDRY, calc = "close", N = 1, n = 20)
+vClose252_IBDRY <- volatility(ohlc_IBDRY, calc = "close", N = 1, n = 120)
+
+t_vClose5_IBDRY <- as.numeric(vClose5_IBDRY[2000:nrow(ohlc_IBDRY),1])
+t_vClose20_IBDRY <- as.numeric(vClose20_IBDRY[2000:nrow(ohlc_IBDRY),1])
+t_vClose252_IBDRY <- as.numeric(vClose252_IBDRY[2000:nrow(ohlc_IBDRY),1])
+
+y_limit <- 0.15
+plot(t_vClose5_IBDRY, type = "l", col = "steelblue", main = "Volatilidad móvil N variable - IBDRY", ylab = "Volatilidad", ylim=c(0,y_limit))
+par(new=TRUE)
+plot(t_vClose20_IBDRY, type = "l", col = "red3", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "")
+par(new=TRUE)
+plot(t_vClose252_IBDRY, type = "l", col = "limegreen", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "")
+legend(x = "topleft", legend = c("5 días","20 días","252 días"), fill = c("steelblue","red3","limegreen"), title = "Núm. días")
+```
+
+En el caso de Iberdrola, no observamos grandes picos de volatilidad en ninguno de los tres tamaños de ventanas. Sin embargo, destaca un gran pico alrededor de la muestra 575 (correspondiente al 2020-03-26, estado de alarma COVID) que muestra una gran volatilidad. Claramente vemos que la ventana de 5 días reacciona fuertemente a este outlier, mientras que la de 20 reacciona más suave y tarda en estabilizarse, y la de 252 días reacciona mucho menos y se mantiene en un período más largo (el de la duración del confinamiento, que muestra una gran volatilidad).
+
+```{r}
+volatilidades_WMT = data.frame(d5 = vClose5_WMT, d20 = vClose20_WMT, d252 = vClose252_WMT)
+volatilidades_IBDRY = data.frame(d5 = vClose5_IBDRY, d20 = vClose20_IBDRY, d252 = vClose252_IBDRY)
+summary(volatilidades_WMT)
+summary(volatilidades_IBDRY)
+```
+
+```{r}
+par(mfrow = c(1,2))
+boxplot(volatilidades_WMT, main="Volatilidades WMT")
+boxplot(volatilidades_IBDRY, main="Volatilidades IBDRY")
+```
+
+## 3.2. Volatilidad condicional
+
+En este apartado, realizamos un análisis de autocorrelaciones de las rentabiliaddes y rentabiliadades al cuadrado, determinando qué modelos de volatilidad condicional podrían ajustarse mejor a los datos.
+
+Primeramente, como todos los modelos que utilizaremos asumen que la media de la rentabilidad es 0, y como hemos visto en apartados anteriores nuestras rentabilidades no tienen exactamente media 0, restamos la media para obtener nuevas series centradas (hay que acordarse de esta transformación para deshacer algun resultado posteriormente, si fuera necesario!):
+
+```{r}
+rLOG_0_WMT <- rLOG_WMT - mean(rLOG_WMT)
+rLOG_0_IBDRY <- rLOG_IBDRY - mean(rLOG_IBDRY)
+cat("        Media WMT:", mean(rLOG_WMT),
+    "\n  Nueva media WMT:", mean(rLOG_0_WMT),
+    "\n      Media IBDRY:", mean(rLOG_IBDRY),
+    "\nNueva media IBDRY:", mean(rLOG_0_IBDRY))
+```
+
+La *función de autocorrelación simple* ($\rho_k$) mide la correlación lineal entre los valores de la serie sobre $k$ retardos temporales:
+
+```{r}
+acf(rLOG_0_WMT, main="WMT Autocorrelación")
+```
+
+Como ya habiamos concluido anteriormente, la rentabilidad no está autocorrelacionada en la história y, por lo tanto, tampoco esperamos que así lo muestra la *función de autocorrelación parcial*, la cuál descuenta la influencia de los valores intermedios:
+
+```{r}
+pacf(rLOG_0_WMT, main="WMT Autocorrelación")
+```
+
+Efectivamente, la PACF no muestra apenas lags significativos y sus correlaciones son muy pequeñas, de la magnitud de 0.05, lo cual vuelve a indicar que la rentabilidad no está autocorrelacionada en la historia.
+
+En cambio, nos fijamos mejor en las rentabilidades al cuadrado:
+
+```{r}
+acf(rLOG_0_WMT^2, main="WMT Autocorrelación")
+```
+
+En el caso de Walmart, observamos que sí que existe cierta autocorrelación que abarca hasta aproximadamente 10 lags (10 días anteriores), con una correlación sigificativa por encima del intervalo de significación. Sin embargo, sabemos que la función ACF simple está influenciada por los valores intermedios, así que nos fijamos en el PACF (parcial):
+
+```{r}
+pacf(rLOG_0_WMT^2, main="WMT Autocorrelación")
+```
+
+En este caso, vemos claramente que existe una fuerte autocorrelación de hasta 3 lags, y podríamos llegar a considerar que también es significativa hasta los 9 días (todo y que los lags 3 y 4 no son significativos). En relación a los modelos, vemos que para que el modelo ajustara bien deberíamos probar un ARCH(7), aunque también se probaran otros modelos en el siguiente apartado.
+
+```{r}
+acf(rLOG_0_IBDRY^2, main="IBDRY Autocorrelación")
+```
+
+En el caso de Iberdrola, obervamos que existe cierta autocorrelación que abarca muchos más lags hasta llegar a unso 34 días significativos. De nuevo, debemos comprobar el gráfico de autocorrelaciones parciales para no tener en cuenta la influencia de los valores intermedios:
+
+```{r}
+pacf(rLOG_0_IBDRY^2, main="IBDRY Autocorrelación")
+```
+
+En este caso, observamos que el efecto de los valores intermedios se ha reducido drásticamente y únicamente vemos autocorrelación hasta 10 lags significativos. Sin embargo a efectos prácticos, deberíamos tener en cuenta hasta 4 días (ya que los días 5 y 7 no son significativos). Por lo tanto, un modelo ARCH(4) podría ajustar bien, aunque también se probaran otros modelos en el siguiente apartado.
+
+## 3.3. Ajuste de modelos
+
+### 3.3.1. Modelo EWMA
+
+El **modelo EWMA** se basa en un modelo de suavizado exponencial basado en medias móviles de N días pesando más los datos recientes (clúster de volatilidad). La condicionalidad se determina porque se estima la variancia en un momento como una función de las rentabiliadades previas. 
+
+$$
+\hat{\sigma}_i^2 = \lambda\hat{\sigma}_{i-1}^2 + (1-\lambda)r_{i-1}^2 + \epsilon_i
+$$
+
+```{r warning=F, message=F}
+ewma_WMT <- EWMAvol(rLOG_0_WMT, lambda = -1)
+sigma_ewma_WMT <- sqrt(ewma_WMT$Sigma.t)
+```
+
+La función del modelo nos devuelve un valor para $\lambda = 0.965$ (significativo) y el valor de volatilidad condicional por cada momento $t$, la cual guardamos haciendole la raíz.
+
+A continuación, graficamos en rojo la volatilidad anterior multiplicada por 1.96, lo cual indica qué rentabilidad se obtiene al día siguiente en un intervalo de confianza del 95% y en gris mostramos la rentabilidad que se ha observado en cada momento en valor absoluto:
+
+```{r warning=F, message=F}
+y_limit <- 0.11
+plot(1.96*sigma_ewma_WMT, type = "l", ylim = c(0,y_limit), lwd = 4, col = "red", main = "EWMA (WMA)")
+par(new=TRUE)
+plot(as.numeric(abs(rLOG_0_WMT)), type = "l", col = "grey", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "", lwd = 0.5)
+```
+
+En general, y para el caso de Walmart, a priori podríamos pensar que el ajuste de este modelo EWMA es bueno y recoje más o menos la volatilidad de la série. De todos modos, tenemos muchos puntos de la série de rentabilidades que sobresalen sobre la rentabilidad esperada. Este hecho hace que, en el momento en que se observan este tipo de rentabilidades outliers, el modelo tarde un tiempo en estabilizarse y estemos estimando unas volatilidades muy altas para los días siguientes de esos valores outliers (ya que la base del modelo radica en usar la volatilidad del día anterior más un cierto  porcentaje por la rentabilidad del día anterior al cuadrado).
+
+A modo de obtener una medida del ajuste del modelo, calculamos un valor similar a los "residuos" (aunque no lo son), comparando la rentabilidad obtenida cada día contra la sigma estimada ese día (es decir, la volatilidad que se hubiera esperado ese día por el modelo):
+
+```{r warning=F, message=F}
+res_ewma_WMT <- as.numeric(abs(rLOG_0_WMT)) - sigma_ewma_WMT
+summary(res_ewma_WMT)
+```
+
+Para Walmart, de media obtenemos un error del -0.0033, lo que quiere decir que de media se está estimando una volatilidad más elevada que lo que acaban siendo las volatilidades. Además, observamos que existe un valor máximo positivo de 0.0942 (casos de los outliers donde la rentabilidad ha sido un 9% mayor que la rentabilidad estimada).
+
+Por todas las razones expresadas anteriormente, a continuación realizamos el mismo proceso para el modelo EWMA pero quitando los valores outliers observados, para ver si el modelo mejora o no:
+
+```{r warning=F, message=F}
+rLOG_0_WMT_2 <- rLOG_0_WMT[abs(rLOG_0_WMT) < 0.08]
+
+ewma_WMT_2 <- EWMAvol(rLOG_0_WMT_2, lambda = -1)
+sigma_ewma_WMT_2 <- sqrt(ewma_WMT_2$Sigma.t)
+```
+
+```{r warning=F, message=F}
+y_limit <- 0.08
+plot(1.96*sigma_ewma_WMT_2, type = "l", ylim = c(0,y_limit), lwd = 4, col = "red", main = "EWMA_2 (WMA)")
+par(new=TRUE)
+plot(as.numeric(abs(rLOG_0_WMT_2)), type = "l", col = "grey", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "", lwd = 0.5)
+```
+
+En este caso, hemos retirado de la serie los valores por encima de 0.08 (eliminando aproximadamente los 6 outliers detectados anteriormente en el gráfico). El resultado esperado hubiera sido de un mejor ajuste del modelo en general pero, sin embargo, a pesar de que el modelo no ha sido tan agresivo en los días posteriores a los outliers, aún se puede observar una gran cantidad de puntos de la rentabilidad que sobresalen de la rentabilidad esperada. Como regla general podríamos decir que quitar ciertos outliers conocidos (en los cuales se conoce perfectamente el contexto del valor atípico) suele ser bueno para que el modelo ajuste mejor, pero no llegamos a esa conclusión para el caso de Walmart.
+
+```{r warning=F, message=F}
+res_ewma_WMT_2 <- as.numeric(abs(rLOG_0_WMT_2)) - sigma_ewma_WMT_2
+summary(res_ewma_WMT_2)
+```
+
+Como era de esperar, eliminando los valores atípicos sí que conseguimos sobreestimar en menor medida la volatilidad condicional, y de media obtenemos un error del -0.0025 (antes era del -0.0033).
+
+```{r warning=F, message=F}
+ewma_IBDRY <- EWMAvol(rLOG_0_IBDRY, lambda = -1)
+sigma_ewma_IBDRY <- sqrt(ewma_IBDRY$Sigma.t)
+```
+
+```{r warning=F, message=F}
+y_limit <- 0.11
+plot(1.96*sigma_ewma_IBDRY, type = "l", ylim = c(0,y_limit), lwd = 4, col = "blue", main = "EWMA (IBDRY)")
+par(new=TRUE)
+plot(as.numeric(abs(rLOG_0_IBDRY)), type = "l", col = "grey", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "", lwd = 0.5)
+```
+
+Por otro lado, para el caso de Iberdrola observamos que el modelo EWMA ajusta de un modo mejor la volatilidad que en el caso de la série de Walmart. Este hecho se puede justificar mirando la forma de la série en los primeros apartados cuando analizábamos las rentabilidades (Iberdrola no tenía una clara tendencia alcista). De nuevo, observamos ciertos puntos dónde las rentabilidades sobresalen sobre la rentabilidad esperada, aunque no son tantos como en el caso de Walmart (de nuevo, el modelo es mejor para Iberdrola).
+
+```{r warning=F, message=F}
+res_ewma_IBDRY <- as.numeric(abs(rLOG_0_IBDRY)) - sigma_ewma_IBDRY
+summary(res_ewma_IBDRY)
+```
+
+Para Iberdrola, de media obtenemos un error del -0.0039, lo que quiere decir que de media se está estimando una volatilidad más elevada que lo que acaban siendo las volatilidades. Y observamos un valor máximo positivo de 0.1293 correspondiente a los casos dónde se encuentran los outliers.
+
+Podríamos concluir que este modelo nos ofrece unas mejores conclusiones para expresar la volatilidad presente en función de la volatilidad pasada. De todos modos, a continuación volveremos a ver qué resultados se obtienen usando el enfoque de eliminar outliers:
+
+```{r warning=F, message=F}
+rLOG_0_IBDRY_2 <- rLOG_0_IBDRY[abs(rLOG_0_IBDRY) < 0.09]
+
+ewma_IBDRY_2 <- EWMAvol(rLOG_0_IBDRY_2, lambda = -1)
+sigma_ewma_IBDRY_2 <- sqrt(ewma_IBDRY_2$Sigma.t)
+```
+
+```{r warning=F, message=F}
+y_limit <- 0.09
+plot(1.96*sigma_ewma_IBDRY_2, type = "l", ylim = c(0,y_limit), lwd = 4, col = "blue", main = "EWMA_2 (IBDRY)")
+par(new=TRUE)
+plot(as.numeric(abs(rLOG_0_IBDRY_2)), type = "l", col = "grey", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "", lwd = 0.5)
+```
+
+```{r warning=F, message=F}
+res_ewma_IBDRY_2 <- as.numeric(abs(rLOG_0_IBDRY_2)) - sigma_ewma_IBDRY_2
+summary(res_ewma_IBDRY_2)
+```
+
+De nuevo, como en el caso de Walmart, una vez hemos eliminado aproximadamente los 4 valores atípicos principales, tanto en el gráfico como en el summary percibimos cierta mejora en el ajuste del modelo. Los valores de la volatilidad condicional estimados son más cercanos y de media obtenemos un error menor de -0.0037 (vs el -0.0039 que teníamos antes).
+
+### 3.3.2. Modelo ARCH
+
+El **modelo ARCH** es un modelo condicional que incorpora una constante proporcionando un nivel de referencia.
+
+$$
+\hat{\sigma}_i^2 = \omega + \sum_{t=1}^L \alpha_t r_{i-t}^2 + \epsilon_i
+$$
+
+Tal y como vimos en el análisis de autocorrelaciones de las rentabilidades y rentabilidades al cuadrado, para el caso de Walmart ajustamos un modelo ARCH(7) inicialmente. Decir que a partir de ahora en ambdas empresas se utilizará las séries de datos que no incluyen los valores atípicos, por las razones vistas anteriormente.
+
+```{r warning=F, message=F, results=F}
+arch_7_WMT <- garchFit(~ garch(7,0), data = rLOG_0_WMT_2, include.mean = FALSE)
+sigma_arch_7_WMT <- as.numeric(arch_7_WMT@sigma.t)
+```
+
+Antes de nada, comprobamos cuáles son los parámetros significativos del modelo ARCH:
+
+```{r warning=F, message=F}
+arch_7_WMT@fit$matcoef[,4] < 0.05
+```
+
+Para el caso de Walmart, de entrada vemos que los parámetros 5, 6 y 7 no son significativos (cosa que ya se podía intuir en los gráficos de autocorrelación ACF y PACF del apartado 3.2). Por lo tanto, antes de evaluar el modelo (y posiblemente obtener malos resultados), nos basaremos en el principio de parsimonia para probar un modelo más sencillo: un ARCH(3) correspondiente a los 3 lags significativos del PACF.
+
+```{r warning=F, message=F, results=F}
+arch_3_WMT <- garchFit(~ garch(3,0), data = rLOG_0_WMT_2, include.mean = FALSE)
+sigma_arch_3_WMT <- as.numeric(arch_3_WMT@sigma.t)
+```
+
+```{r warning=F, message=F}
+arch_3_WMT@fit$matcoef[,4] < 0.05
+```
+
+Naturalmente, ahora sí que todos los parámetros (omegas y alfas) son significativos.
+A continuación, con tal de comparar de manera más fidedigna los modelos, utilizaremos el mismo tipo de plot que en el modelo EWMA para mirar el ajuste:
+
+```{r warning=F, message=F}
+y_limit <- 0.08
+plot(1.96*sigma_arch_3_WMT, type = "l", ylim = c(0,y_limit), lwd = 4, col = "red", main = "ARCH(3) (WMT)")
+par(new=TRUE)
+plot(as.numeric(abs(rLOG_0_WMT_2)), type = "l", col = "grey", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "", lwd = 0.5)
+```
+
+A la vista del resultado, observamos que este modelo ARCH(3) es mucho peor que el modelo EWMA porque está siempre condicionado por el valor constante de omega y únicamente las desviaciones de la propia volatilidad vienen dadas por la rentabilidad al cuadrado del día anterior (es súmamente volátil).
+
+Por otro lado, analizamos los residuos. Para que el modelo se considere bueno, los residuos tiene que ser ruido blanco y no tiene que tener autocorrelación: 
+
+```{r warning=F, message=F}
+plot(arch_3_WMT, which = 7)
+```
+
+Por un lado, en el caso del ruido blanco, los residuos sí que tienen media cero y tiene más o menos la misma variabilidad.
+
+```{r warning=F, message=F}
+plot(arch_3_WMT, which = 11)
+```
+
+Por otro lado, si el modelo ajusta bien, el propio modelo tiene que recoger la autocorrelación de las rentabilidades al cuadrado. Por lo tanto, los residuos (y los residuos al cuadrado) no tiene que estar autocorrelacionados.
+
+En nuestro caso, nos sorprende que ambas condiciones para los residuos se cumplan, ya que eso indica que el modelo es medianamente bueno y, en cambio, el ajuste no muestra tal efecto. De nuevo, consideramos que este mal ajuste se debe principalmente al condicionado constante de omega.
+
+```{r warning=F, message=F, results=F}
+res_arch_3_WMT <- as.numeric(abs(rLOG_0_WMT_2)) - sigma_arch_3_WMT
+summary(res_arch_3_WMT)
+```
+
+Como medida de ajuste, de media obtenemos un error del -0.0028, lo que quiere decir que de media se está estimando una volatilidad más elevada que lo que acaban siendo las volatilidades.
+
+A continuación, probamos un modelo ARCH(4) para el caso de Iberdrola, ya que estos 4 lags eran significativos en el análisis del PACF:
+
+```{r warning=F, message=F, results=F}
+arch_4_IBDRY <- garchFit(~ garch(4,0), data = rLOG_0_IBDRY_2, include.mean = FALSE)
+sigma_arch_4_IBDRY <- as.numeric(arch_4_IBDRY@sigma.t)
+```
+
+```{r warning=F, message=F}
+arch_4_IBDRY@fit$matcoef[,4] < 0.05
+```
+
+Efectivamente, todos los parámetros del modelo ARCH(4) para Iberdrola son significativos. Seguidamente, visualizamos el ajuste para esta série:
+
+```{r warning=F, message=F}
+y_limit <- 0.11
+plot(1.96*sigma_arch_4_IBDRY, type = "l", ylim = c(0,y_limit), lwd = 4, col = "blue", main = "ARCH(4) (IBDRY)")
+par(new=TRUE)
+plot(as.numeric(abs(rLOG_0_IBDRY_2)), type = "l", col = "grey", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "", lwd = 0.5)
+```
+
+En este caso, al contrario de Walmart, con Iberdrola sí que vemos un ajuste algo mejor con el modelo ARCH. De hecho, a priori podemos ver que se asemeja bastante al modelo EWMA y en ciertos puntos es mejor, aunque en otros se desestabiliza un poco.
+
+De nuevo, este mejor ajuste de los modelos para la série de Iberdrola ya lo veíamos en el análisis de la volatilidad, dónde se observaban mayores picos en la série. Esto nos puede servir para concluir que Iberdrola es "más sencillo" de predecir/analizar que Walmart.
+
+```{r warning=F, message=F}
+plot(arch_4_IBDRY, which = 7)
+```
+
+```{r warning=F, message=F}
+plot(arch_4_IBDRY, which = 11)
+```
+
+En cuanto a los residuos, sí que tenemos ruido blanco pero aparecen algunos lags autocorrelacionados en los residuos. De nuevo, este hecho es sorprendente porque en un principio el modelo sí que lo deberíamos de considerar bueno, visto el ajuste obtenido. En cualquier caso, concluimos que como únicamente se observan un par de lags mínimamente autocorrelacionados podemos considerar que no hay apenas correlación.
+
+Aún así, hay que ser conscientes de que en datos en los que exista una autocorrelación a muchos lags (no en Walmart ni en Iberdrola), este tipo de modelos ARCH no funcionen bien.
+
+```{r warning=F, message=F, results=F}
+res_arch_4_IBDRY <- as.numeric(abs(rLOG_0_IBDRY_2)) - sigma_arch_4_IBDRY
+summary(res_arch_4_IBDRY)
+```
+
+Como medida de ajuste, de media obtenemos un error del -0.0044, lo que quiere decir que de media se está estimando una volatilidad más elevada que lo que acaban siendo las volatilidades.
+
+### 3.3.3. Modelo GARCH
+
+El **modelo GARCH** es un modelo condicional que combina los modelos EWMA y ARCH, es decir, tanto el número de lags respecto la rentabilidad como respecto la volatilidad.
+
+$$
+\hat{\sigma}_i^2 = \omega + \sum_{t=1}^{L_1} \alpha_t r_{i-t}^2 + \sum_{k=1}^{L_2} \beta_k \sigma_{i-k}^2 + \epsilon_i
+$$
+
+Para elegir qué parámetros usar para el modelo GARCH nos basamos en el principio que la parte que da cierta autocorrelación a las rentabiliades de los días previos (ARCH) está más relacionada con la Función de Autocorrelación Parcial, y la parte que añade la proporción de la volatilidad histórica (EWMA) está más relacionada con la Función de Autocorrelación Simple.
+
+Por lo tanto, para el caso de Walmart, probamos un modelo GARCH(3,3). En general, el ACF muestra muchos más lags autocorrelacionados (hasta 20), pero nos basamos en elegir un modelo lo más simple posible y que ajuste lo mejor los datos:
+
+```{r warning=F, message=F, results=F}
+garch_33_WMT <- garchFit(~ garch(3,3), data = rLOG_0_WMT_2, include.mean = FALSE)
+sigma_garch_33_WMT <- as.numeric(garch_33_WMT@sigma.t)
+```
+
+```{r warning=F, message=F}
+y_limit <- 0.08
+plot(1.96*sigma_garch_33_WMT, type = "l", ylim = c(0,y_limit), lwd = 4, col = "red", main = "GARCH(3,3) (WMT)")
+par(new=TRUE)
+plot(as.numeric(abs(rLOG_0_WMT_2)), type = "l", col = "grey", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "", lwd = 0.5)
+```
+
+En el caso de Walmart, el modelo GARCH(3,3) tiene un ajuste similar al EWMA (hecho que suele pasar y esperábamos). Hay que destacar que al contrario que el modelo ARCH(3) probado anteriormente, ahora el efecto de la constante omega ha disminuido un poco aunque sigue afectando mucho a la estimación.
+
+```{r warning=F, message=F, results=F}
+res_garch_33_WMT <- as.numeric(abs(rLOG_0_WMT_2)) - sigma_garch_33_WMT
+summary(res_garch_33_WMT)
+```
+
+Como medida de ajuste, de media obtenemos un error del -0.0028, lo que quiere decir que de media se está estimando una volatilidad más elevada que lo que acaban siendo las volatilidades.
+
+Para el caso de Iberdrola, probamos un modelo GARCH(4,5), basandonos en el análisi de las autocorrelaciones del apartado 3.2:
+
+```{r warning=F, message=F, results=F}
+garch_45_IBDRY <- garchFit(~ garch(4,5), data = rLOG_0_IBDRY_2, include.mean = FALSE)
+sigma_garch_45_IBDRY <- as.numeric(garch_45_IBDRY@sigma.t)
+```
+
+```{r warning=F, message=F}
+y_limit <- 0.09
+plot(1.96*sigma_garch_45_IBDRY, type = "l", ylim = c(0,y_limit), lwd = 4, col = "red", main = "GARCH(4,5) (IBDRY)")
+par(new=TRUE)
+plot(as.numeric(abs(rLOG_0_IBDRY_2)), type = "l", col = "grey", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "", lwd = 0.5)
+```
+
+```{r warning=F, message=F, results=F}
+res_garch_45_IBDRY <- as.numeric(abs(rLOG_0_IBDRY_2)) - sigma_garch_45_IBDRY
+summary(res_garch_45_IBDRY)
+```
+
+Para el caso de Iberdrola, de nuevo vemos que el ajuste es similar al del modelo EWMA. Y como medida de ajuste, obtenemos un error del -0.0039, lo que quiere decir que de media se está estimando una volatilidad más elevada que lo que acaban siendo las volatilidades.
+
+## 3.4. Comparación
+
+Por último, recopilamos todos los modelos probados para Walmart a modo de resumen:
+
+```{r, warning=F}
+t_sigma_ewma_WMT_2 <- sigma_ewma_WMT_2[2000:length(sigma_ewma_WMT_2)]
+t_sigma_arch_3_WMT <- sigma_arch_3_WMT[2000:length(sigma_arch_3_WMT)]
+t_sigma_garch_33_WMT <- sigma_garch_33_WMT[2000:length(sigma_garch_33_WMT)]
+
+y_limit <- 0.04
+plot(t_sigma_ewma_WMT_2, type = "l", col = "steelblue", main = "EWMA, ARCH, GARCH - (WMT)", ylab = "Volatilidad", ylim=c(0,y_limit))
+par(new=TRUE)
+plot(t_sigma_arch_3_WMT, type = "l", col = "red3", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "")
+par(new=TRUE)
+plot(t_sigma_garch_33_WMT, type = "l", col = "limegreen", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "")
+legend(x = "topleft", legend = c("EWMA", "ARCH(3)","GARCH(3,3)"), fill = c("steelblue","red3","limegreen"), title = "Volatilidad")
+```
+
+Y hacemos lo mismo para la empresa Iberdrola:
+
+```{r, warning=F}
+t_sigma_ewma_IBDRY_2 <- sigma_ewma_IBDRY_2[2000:length(sigma_ewma_IBDRY_2)]
+t_sigma_arch_4_IBDRY <- sigma_arch_4_IBDRY[2000:length(sigma_arch_4_IBDRY)]
+t_sigma_garch_45_IBDRY <- sigma_garch_45_IBDRY[2000:length(sigma_garch_45_IBDRY)]
+
+y_limit <- 0.05
+plot(t_sigma_ewma_IBDRY_2, type = "l", col = "steelblue", main = "EWMA, ARCH, GARCH - (IBDRY)", ylab = "Volatilidad", ylim=c(0,y_limit))
+par(new=TRUE)
+plot(t_sigma_arch_4_IBDRY, type = "l", col = "red3", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "")
+par(new=TRUE)
+plot(t_sigma_garch_45_IBDRY, type = "l", col = "limegreen", add = TRUE, xlab = "", ylab = "", axes = FALSE, ylim=c(0,y_limit), main = "")
+legend(x = "topleft", legend = c("EWMA", "ARCH(4)","GARCH(4,5)"), fill = c("steelblue","red3","limegreen"), title = "Volatilidad")
+```
+
+Tal y como podemos observar en ambas empresas, los modelos ARCH que hemos probado son los que peor ajustan y, tal y como se ha ido comentando en los apartados anteriores, tanto los modelos EWMA como GARCH que son muy parecidos ajustan bien. La conclusión final es que ambos modelos, EWMA y GARCH, son muy parecidos y en valor absoluto nos estan estimando prácticamente la misma volatilidad.
+
+## 3.5. Volatilidad futura
+
+Finalmente, a modo ilustrativo, realizamos algunas estimaciones de la volatilidad futura para cada empresa. En realidad podríamos escoger tanto el modelo EWMA como el GARCH para obtener predicciones decentes, y en concreto en este caso usaremos los respectivos modelos GARCH que nos han funcionado mejor anteriormente:
+
+```{r, warning=F}
+predict(garch_33_WMT, n.ahead = 20, plot = TRUE, crit_val = 2)
+predict(garch_45_IBDRY, n.ahead = 20, plot = TRUE, crit_val = 2)
+```
+
+Destacamos que el predict nos devuelve que la media de la rentabilidad esperada es 0 (ya que estos modelos estan suponiendo todo el rato que la rentabilidad media es 0) y los valores que nos interesan son las "standardDeviation" que es la volatilidad que estamos calculando.
+
+Por útlimo, decir que en los gráficos se percibe que la volatilidad parece reducirse a medida que avanza el tiempo de la predicción. Esto es debido a que como ya no disponemos de la parte de la rentabilidad al cuadrado, el valor es 0 y se suma el porcentaje de la volatilidad que estoy prediciendo mañana.

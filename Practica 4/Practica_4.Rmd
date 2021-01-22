@@ -1,0 +1,483 @@
+---
+title: "Práctica 4. Estadística aplicada a la Gestión de Carteras"
+subtitle: "Métodos Estadísticos para Finanzas y Seguros"
+author: "Alex Carrillo Alza"
+date: "22 de enero de 2021"
+output:
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float:
+      collapsed: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_libraries, include=FALSE}
+library(fPortfolio)
+library(quantmod)
+library(PerformanceAnalytics)
+```
+
+Para la resolución de esta actividad se solicita **seleccionar cinco empresas a elegir por el alumno**, como sigue:
+
+- Deberán seleccionarse las 2 empresas escogidas en la actividad 1 de Finanzas.
+- Deberán seleccionarse 3 empresas adicionales.
+
+(no podrá seleccionarse ninguna de las empresas analizadas en clase: AAPL, MSFT, NFLX, IBM, F y BBVA).
+
+Para los análisis deberá suponerse una **rentabilidad fija anual del 1,5%**. Adicionalmente, deberá **seleccionarse una cartera de referencia** acorde con los títulos seleccionados.
+
+Se pide elaborar un informe con un análisis de construcción de carteras con las cinco empresas seleccionadas. Para ello se realizarán, como mínimo, los siguientes pasos:
+
+a\) **Descargar** mediante la rutina de carga de datos de Yahoo Finance la **serie de precios** de la acción de las cinco empresas y de la cartera de referencia con datos **hasta diciembre de 2019.** Se deja a decisión del alumno la profundidad histórica seleccionada. (como mínimo deberán seleccionarse 2 años de datos)
+
+Obtenga las rentabilidades relativas mensuales de las cinco empresas
+
+b\) **Análisis de empresas**: se deberá realizar un primer análisis descriptivo de las cinco empresas seleccionadas. Como mínimo deberá incluir:
+
+- Análisis de rentabilidad y riesgo.
+- Análisis de correlaciones.
+
+c\) **Construcción de carteras de valores**. Deberán obtenerse tres carteras de valores con las siguientes características:
+
+- Cartera de valores con el mismo peso en cada una de las cinco empresas.
+- Obtenga la Frontera Eficiente entre las cinco empresas y construya las siguientes carteras:
+    i. Cartera de valores que minimiza el riesgo.
+    ii. Cartera de valores que minimiza el riesgo, pero añadiendo alguna restricción y/o condicionando a una rentabilidad esperada concreta.
+
+(La restricción deberá ser distinta a la realizada en clase)
+
+d\) **Análisis de performance de las carteras**. Se deberá descargar las series de precio de las cinco empresas y de la cartera de referencia para el año 2020. Se deberán realizar, como mínimo, los siguientes análisis:
+
+- Comparación de las rentabilidades y riesgos obtenidos en 2020 respecto a las obtenidas en el periodo anterior.
+- Análisis de performance de las carteras utilizando el índice de Sharpe.
+
+# 1. Introducción
+
+En este trabajo se realizará un informe analizando la rentabilidad y el riesgo de una cartera formada **Walmart (WMT)**, la corporación multinacional de tiendas de grandes superfícies de origen estadounidense; **Iberdrola (IBDRY)**, el grupo empresarial español dedicado a la producción, distribución y comercialización de energia; **Amazon (AMZN)**, la compañía estadounidense de comercio electrónico; **Grifols (GRFS)**, la multinacional española especializada en el sector farmacéutico y hospitalario; y **LVMH Moët Hennessy Louis Vuitton (LVMHF)**, el conglomerado multinacional francés líder absoluto en lujo.
+
+La razón por la que se han elegido las dos primeras empresas tan distintas (Walmart e Iberdrola) es para dar una mayor variedad a las conclusiones del análisis tanto a nivel de sector (*supermercados* vs. *energia*) como a nivel de mercados (la *Bolsa de Nueva York, NYSE* vs. el *índice bursátil español, IBEX 35*). Además, las otras tres empresas (Amazon, Grifols y Louis Vuitton) se han elegido para diversificar al máximo la cartera en cuanto a sectores se refiere, desde comercio electrónico, sector farmacéutico hasta lujo. Observaremos si este gesto de seleccionar una cartera tan diversificada tiene efecto en los resultados del análisis.
+
+## 1.1. Series de datos
+
+Para obtener un número de datos suficientemente grande para el análisis y tener un mayor rigor en los resultados de la performance de las carteras en el futuro, nos remontamos al inicio del año 2012 (2012-01-01), donde todas las empresas disponen de datos, hasta la fecha de diciembre de 2019 (2019-12-31): prácticamente **8 años** de datos.
+
+El año 2020 se reservará para el análisis de performance de las carteras más adelante.
+
+```{r warning=FALSE, message=F, results='hide'}
+getSymbols(c("WMT","IBDRY","AMZN","GRFS","LVMHF"), from="2012-01-01", to="2019-12-31")
+```
+
+Comprobamos que todas las series tienen la misma longitud (**`r nrow(WMT)`** muestras) y mostramos la primera y última muestra de una empresa:
+
+```{r, echo=F, results='hide'}
+nrow(WMT)
+nrow(IBDRY)
+nrow(AMZN)
+nrow(GRFS)
+nrow(LVMHF)
+```
+
+```{r}
+GRFS[c(1,nrow(GRFS)),-ncol(GRFS)]
+```
+
+## 1.1. Rentabilidades mensuales
+
+En primer lugar, obtenemos las rentabilidades relativas mensuales de las cinco empresas. Recordemos que en el mundo bursátil las operaciones se realizan de lunes a viernes, con lo cual los periodos de 5, 20 y 252 días corresponden a una semana, un mes y un año respectivamente.
+
+$$
+r_i = \frac{P_i-P_{i-20}}{P_{i-20}}
+$$
+
+```{r}
+# 20 -> MENSUALES!
+Retornos <- function(stock, dias=20) diff(stock[,4],dias)/lag(stock[,4],dias)[-c(1:dias)]
+
+rent_WMT <- Retornos(WMT)
+rent_IBDRY <- Retornos(IBDRY)
+rent_AMZN <- Retornos(AMZN)
+rent_GRFS <- Retornos(GRFS)
+rent_LVMHF <- Retornos(LVMHF)
+```
+
+Guardamos todas las rentabilidades relativas mensuales calculadas en una lista para hacer gráficos y también creamos un dataframe con ellas, que mostramos a continuación:
+
+```{r}
+rents_list <- list(rent_WMT, rent_IBDRY, rent_AMZN, rent_GRFS, rent_LVMHF)
+rents <- data.frame(rents_list)
+head(rents)
+```
+
+A modo ilustrativo, dibujamos el gráfico de los rendimientos relativos mensuales, para cada empresa:
+
+```{r}
+NAMES <- c("WMT","IBDRY","AMZN","GRFS","LVMHF")
+opar <- par(mfrow = c(3,2))
+for (p in 1:length(rents_list)) chartSeries(rents_list[[p]], type="lines", theme="white", name=NAMES[p], layout=NULL)
+par(opar)
+```
+
+A grandes rasgos no se puede extraer demasiadas conclusiones: las rentabilidades oscilan alrededor de 0 con subidas o bajadas más o menos pronunciadas en cada periodo. De todos modos, observando la escala del eje vertical de cada empresa se puede suponer cuáles han tenido rentabilidades mayores (Amazon, Grifols, Iberdrola) y cuales han obtenido rentabilidades menores (Walmart, Loui Vuitton).
+
+## 1.2. Análisis de empresas
+
+En este apartado, realizamos un breve análisis descriptivo de las 5 empresas seleccionadas. Primeramente, generamos un summary de las estadísticas de cada empresa:
+
+```{r}
+(stats <- as.data.frame(apply(rents, 2, summary)))
+```
+
+Ordenando los títulos por su rentabilidad media obtenemos:
+
+```{r}
+sort(100*stats[4,], decreasing = T)
+```
+
+Tal y como se puede observar si nos fijamos en la rentabilidad media, Amazon encabeza la lista con un retorno mensual medio del **2.58%**, seguido de Grifols con un **1.69%**, Louis Vuitton con un **1.41%**, Walmart con un **0.8%** y finalmente Iberdrola con un **0.7%**.
+
+A continuación, nos fijamos en la amplitud entre los valores máximos y mínimos de las rentabilidades para obtener una idea de la dispersión del "riesgo" de cada empresa en el sentido de las rentabilidades extremas más altas y más bajas. Ordenando los títulos por sus extremos de la rentabilidad obtenemos:
+
+```{r}
+sort(100*(stats[6,]-stats[1,]), decreasing = T)
+```
+
+De nuevo Amazon es la empresa que muestra más dispersión, seguido de Iberdrola, Grifols, Louis Vuitton y Walmart. No hay que perder de vista que si nos fijamos en el summary preliminar, la empresa que ha tenido una rentabilidad negativa más grande es Iberdrola (con un **-25.61%**) y la empresa que ha tenido una rentabilidad positiva más alta sigue siendo Amazon (con un **33.06%**).
+
+A modo de resumen, los datos descritos anteriormente se pueden observar en el siguiente boxplot de las empresas:
+
+```{r}
+boxplot(rents, names=NAMES)
+```
+
+Por otro lado, resulta muy interesante estudiar la correlación que existe entre los títulos ya que el riesgo de una cartera no depende únicamente del riesgo individual de cada activo, sino que interviene la relación entre ellos. Es por esto que la "diversificación" de valores con el objetivo de reducir el riesgo total debe realizarse analizando la correlación entre los mismos:
+
+```{r}
+cor(rents)
+```
+
+La teoría demuestra que en las correlaciones cercanas a 1 la diversificación no resulta ventajosa y no se reduce el riesgo ya que siempre mayor rentabilidad implicará mayor riesgo. De entrada, fijandonos en la matriz de correlación, ninguna correlación es cercana a 1 (de hecho la correlación máxima es **0.31** entre Iberdrola y Louis Vuitton), lo cual es positivo para la cartera.
+
+En cualquier caso, lo preferible sería tener correlaciones cercanas a -1 en las cuales la diversificación sí resulta ventajosa y se reduce (o incluso se elimina) el riesgo. Este hecho es díficil de obtener en la práctica, pero aún así comprobamos que las correlaciones de nuestra cartera se encuentran lo más cercana a 0 (y por tanto a -1) posible.
+
+Por último, dibujamos las rentabilidades medias en función del riesgo (desviación estándard) de cada empresa:
+
+```{r}
+rentabilidad <- apply(X = rents, MARGIN = 2, FUN = mean)
+riesgo <- apply(X = rents, MARGIN = 2, FUN = sd)
+plot(rentabilidad~riesgo, col="red", pch=19, ylim=c(min(rentabilidad)-0.001,max(rentabilidad)+0.001))
+text(rentabilidad~riesgo, labels=NAMES, cex=0.9, font=2, pos=1)
+grid()
+```
+
+Fijémonos en que a excepción de Walmart e Iberdrola, con las otras empresas se obtiene una rentabilidad media muy alta a expensas de asumir un mayor riesgo. Vemos que hay una relación que podríamos considerar casi lineal entre el riesgo y la rentabilidad que obtenemos con Louis Vuitton, Grifols y Amazon (de menor a mayor rentabilidad-riesgo). Sin embargo, Walmart e Iberdrola, pese a tener las rentabilidades medias más bajas, son muy similares y ocurre el hecho de que con Walmart obtenemos prácticamente la misma rentabilidad que en Iberdrola pero con el incentivo de soportar un riesgo notablemente menor.
+
+Como conclusión, pese a que naturalmente se puede llegar a argumentar que con un mayor riesgo se puede recibir puntualmente una rentabilidad más alta, los resultados vistos en media describen cuál es el comportamiento que al final nos interesa a la hora de invertir.
+
+# 2. Construcción de carteras
+
+## 2.1. Cartera mismo peso
+
+La primera cartera que construimos es esa en la cual queremos invertir proporcionalmente la misma cantidad a cada título. En este caso, eso corresponde con un 20% para cada título. Calculamos las rentabilidades de la cartera y mostramos los primeros valores de la serie:
+
+```{r}
+cartera_1 <- 0.2*(rent_WMT + rent_IBDRY + rent_AMZN + rent_GRFS + rent_LVMHF)
+names(cartera_1) <- "cartera_1"
+head(cartera_1)
+```
+
+Generando el summary de la cartera obtenemos:
+
+```{r}
+SummaryCartera <- function(cartera) {
+  cat("------",deparse(substitute(cartera)),"------",
+    "\n   Rentabilidad mensual media: ", mean(cartera)*100, "%",
+    "\nRiesgo (desviación estandard): ", sd(cartera),
+    "\n  (rentabilidad mensual min.):", min(cartera)*100, "%",
+    "\n  (rentabilidad mensual max.): ", max(cartera)*100, "%", "\n\n")
+}
+
+SummaryCartera(cartera_1)
+```
+
+La rentabilidad mensual media que se obtiene con esta cartera preliminar de mismo peso es del **1.44%** y con un riesgo de **0.037**. Más tarde, compararemos estos valores con el de otras carteras. Además dibujamos las rentabilidades de la cartera y marcamos la rentabilidad media a modo ilustrativo:
+
+```{r}
+GraficoCartera <- function(cartera) {
+  chartSeries(cartera, type="l", theme="white")
+  abline(h=mean(cartera), col="red", lwd=2, lty=5)
+}
+
+GraficoCartera(cartera_1)
+```
+
+## 2.2. Carteras eficientes
+
+El objetivo de este apartado es obtener una cartera eficiente con la que se obtenga la máxima rentabilidad a un mínimo riesgo.
+
+### 2.2.1. Frontera eficiente
+
+La frontera eficiente representa todas aquellas combinaciones de puntos que reflejan la menor varianza posible para un nivel dado de rentabilidad esperada. Dicho de otro modo, la frontera puede definirse como todos aquellos puntos en los cuales se obtiene una rentabilidad óptima dado un nivel de riesgo. Primeramente, procedemos a definir un portafolio con una *rentabilidad fija anual* del **1.5%** (ajustado a los 12 meses que consideramos en 1 año, porque estamos trabajando con rentabilidades mensuales) y con 50 puntos:
+
+```{r}
+RENTABILIDAD_FIJA_ANUAL <- 0.015
+RISK_FREE_RATE <- RENTABILIDAD_FIJA_ANUAL / 12
+Spec <- portfolioSpec()
+setRiskFreeRate(Spec) <- RISK_FREE_RATE
+setNFrontierPoints(Spec) <- 50
+```
+
+A continuación calculamos la frontera eficiente y dibujamos directamente el gráfico resumen final que nos proporciona la función:
+
+```{r}
+Frontera <- portfolioFrontier(as.timeSeries(rents), spec=Spec)
+tailoredFrontierPlot(Frontera)
+```
+
+En primer lugar, observamos que la frontera eficiente como tal la definen los puntos marcados en negro, ya que los puntos grises no se consideran "eficientes" porque ofrecen una menor rentabilidad a un mismo riesgo dado. Por otro lado, marcado en rojo podemos ver el punto de mínima varianza, es decir, mínimo riesgo. Más concretamente, podemos acceder a sus coordenadas para ver de cuál se trata:
+
+```{r}
+frontierPoints(Frontera)[which.min(frontierPoints(Frontera)[,1]),]
+```
+
+El mínimo riesgo está fijado en **0.033** (menor que en la cartera con mismo peso, que era de **0.037**) y para ese riesgo dado obtenemos una rentabilidad media mensual del **1.12%**.
+
+Por otro lado, el cuadrado gris que se muestra en el gráfico nos muestra el riesgo y la rentabilidad en la cartera de mismo peso (Cartera 1, con 20% por cada título). En este caso, vemos que esa cartera en realidad no es una cartera eficiente porque tiene un riesgo dado y, para ese mismo riesgo, podríamos haber obtenido una rentabilidad más alta invirtiendo con otra distribución de pesos distinta (no uniforme).
+
+Finalmente, en el gráfico también vemos dibujada la "tangency line", denominada como Capital Market Line (CML), que es la tangente entre la rentabilidad sin resgo y la frontera eficiente. Esta recta incluye todas las carteras (P), las cuales están compuestas por una combinación del activo libre de riesgo y de la cartera M. La línea naranja que aparece superpuesta en el gráfico representa la pendiente de la Capital Market Line en función del riesgo. Naturalmente, el punto en el que se máximiza el pendiente corresponde con el punto tangente de la CML.
+
+Alternativamente, podemos visualizar la distribución de los pesos de cada punto mostrado en la grafica anterior:
+
+```{r}
+col <- qualiPalette(ncol(rents), "Dark2")
+weightsPlot(Frontera, col=col)
+```
+
+En el gráfico vemos que en el punto de convergencia de mínima varianza (mínimo riesgo, marcado con la línea vertical negra) el peso se distribuye con un mayor porcentaje a Walmart, seguido de Iberdrola, Louis Vuitton, Amazon y finalmente Grifols. En cambio, para otras rentabilidades y riesgo los pesos se distribuyen de una manera u otra.
+
+### 2.2.2. Cartera mínimo riesgo
+
+En este caso generamos la cartera de mínimo riesgo a partir del portafolio creado anteriormente y obtenemos la distribución de pesos que se ha calculado para ella:
+
+```{r}
+efPortfolio <- minvariancePortfolio(as.timeSeries(rents), Spec)
+(p_ef <- getWeights(efPortfolio))
+```
+
+A continuación, usamos los pesos de **~44%** para Walmart, **~24%** para Iberdrola, **~12%** para Amazon, **~8%** para Grifols y **~12%** para Louid Vuitton para crear nuestra segunda cartera que mostramos a continuación:
+
+```{r}
+cartera_2 <- rent_WMT*p_ef[1] + rent_IBDRY*p_ef[2] + rent_AMZN*p_ef[3] + rent_GRFS*p_ef[4] + rent_LVMHF*p_ef[5]
+names(cartera_2) <- "cartera_2"
+head(cartera_2)
+```
+
+Y comparamos los resultados con los de la cartera 1 del apartado anterior (la de mismos pesos):
+
+```{r}
+SummaryCartera(cartera_1)
+SummaryCartera(cartera_2)
+```
+
+Naturalmente, y como era de esperar, el riesgo que obtenemos para la cartera 2 es inferior ya que hemos calculado la cartera de mínima varianza (mínimo riesgo). Sin embargo, cabe destacar que nos sorprende que la rentabilidad mensual media de la cartera de mínimo riesgo (**1.13%**) no es superior a la de la cartera de mismos pesos (**1.44%**). Hubiera sido más beneficioso para el inversor que se hubiera obtenido una rentabilidad mayor a un menor riesgo. De todos modos, se puede argumentar que en el caso de que se busquen rentabilidades más cercanas a la de la cartera 1 y se esté dispuesto a asumir más riesgo, se puede optar por esa estrategia.
+
+Como comentario adicional, notamos que en el anterior gráfico de la Frontera Eficiente ya se percebia este hecho debido a que el cuadrado gris (el de la cartera de mismos pesos) está ligeramente hacia la derecha y hacia la parte superior del gráfico en comparación con el punto de mínima varianza, lo cual indica mayor rentabilidad a un mayor riesgo.
+
+A modo ilustrativo de lo dicho anteriormente, dibujamos las rentabilidades de la cartera y marcamos la rentabilidad media:
+
+```{r}
+GraficoCartera(cartera_2)
+```
+
+### 2.2.3. Cartera con restricción
+
+La siguiente cartera corresponde con una *cartera de mínimo riesgo* como la anterior pero a la cual le vamos a aplicar ciertas restricciones en cuanto a la *distribución de pesos* de los títulos. Como esta restriccion puede llevar a ser demasiado arbitraria, vamos a justificar nuestra elección.
+
+Por un lado, antes hemos visto que la cartera de mínimo riesgo no obtenía una rentabilidad mensual media mayor, sinó que su rentabilidad era ligeramente inferior a la de la cartera de mismo peso. Además, algunos de los pesos obtenidos en la cartera 2 los consideramos demasiado pequeños, como por ejemplo el 8% para Grifols. Por estas dos razones, aplicamos una primera restricción de pesos mínimos del 15%, lo que nos acerca más a una cartera uniforme (del 20%, así esperamos aumentar la rentabilidad) y evitamos dar un peso demasido pequeño a otros títulos.
+
+Por otro lado, anteriormente en la cartera 2 también hemos visto que algún peso superaba el umbral del 40% y queremos evitar esto para diversificar al máximo la inversión. Todo el porcentaje residual que podamos rescatar de otros títulos y diversificarlo en otros pretende generar una cartera más resiliente.
+
+Destacamos que no utilizaremos la *restricción del retorno esperado* debido a las insignificantes diferencias que hemos obtenido anteriormente en las rentabilidades de las carteras 1 y 2, ya que si fijáramos una rentabilidad cercana a la de la cartera 1 el riesgo aumentaria considerablemente.
+
+```{r}
+Constraint = c("minW[c(1,2,3,4,5)]=c(0.15,0.15,0.15,0.15,0.15)", "maxW[c(1,2,3,4,5)]=c(0.4,0.4,0.4,0.4,0.4)")
+efPortfolio_c <- efficientPortfolio(as.timeSeries(rents), Spec, Constraint)
+(p_ef_c <- getWeights(efPortfolio_c))
+```
+
+En este caso, usamos los pesos de **~36%** para Walmart, **~19%** para Iberdrola, **~15%** para Amazon, **~15%** para Grifols y **~15%** para Louid Vuitton para crear nuestra tercera cartera:
+
+```{r}
+cartera_3 <- rent_WMT*p_ef_c[1] + rent_IBDRY*p_ef_c[2] + rent_AMZN*p_ef_c[3] + rent_GRFS*p_ef_c[4] + rent_LVMHF*p_ef_c[5]
+names(cartera_3) <- "cartera_3"
+head(cartera_3)
+```
+
+Y comparamos los resultados con los obtenidos para las carteras 1 y 2 anteriores:
+
+```{r}
+SummaryCartera(cartera_1)
+SummaryCartera(cartera_2)
+SummaryCartera(cartera_3)
+```
+
+En este caso, obtenemos un riesgo de **0.033** que es prácticamente igual que el que obteniamos en la cartera 2 (0.033) y desde luego sigue siendo cercano al punto de mínima varianza y se aleja del riesgo más grande de la cartera 1 (0.037). Además, con este riesgo que consideramos igual que el de la cartera 2 en la práctica, obtenemos una rentabilidad mayor que antes, llegando a un **1.27%** de rentabilidad mensual media. Este hecho indica que la cartera 3 es preferible ya que ofrece una mayor rentabilidad a un menor riesgo.
+
+A modo de resumen del apartado, dibujamos los boxplots de las tres carteras creadas:
+
+```{r}
+carteras <- data.frame(c1=cartera_1, c2=cartera_2, c3=cartera_3)
+boxplot(carteras)
+```
+
+De nuevo, notamos que la cartera 1 es la que mayor rentabilidad mensual media obtiene a expensas de un mayor riesgo. Sin embargo, si comparamos las carteras 2 y 3, se puede percibir la mayor rentabilidad media de la cartera 3 y la prácticamente misma dispersión del riesgo para ambas, lo que vuelve a confirmar que la cartera 3 sería la más adecuada para una estrategia de inversión.
+
+Sobre todos los análisis anteriores hay que decir que queda a criterio del inversor qué estrategia quiere seguir: si quiere minimizar el riesgo, si quiere hacer la cartera tangente, si quiere una rentabilidad esperada o si quiere poner restricciones o no. No existen mejores ni peores opciones, es criterio del inversor que cartera desea construir y el desempeño de esta es lo que determinará cuán mejor o peor es.
+
+# 3. Análisis de performance
+
+En este apartado hacemos la simulación de comprar acciones de las carteras construidas anteriormente y analizamos qué hubiera pasado con estas carteras en el 2020. Para hacer esto, usamos los indicadores de performance que son indicadores *ex-post* que sirven para analizar la bondad de la cartera, es decir, si está funcionando bien o no respecto a una cartera de referencia dada.
+
+## 3.1. Comparación en 2020
+
+Primeramente descargamos los datos de los mismos títulos utilizados pero para el año 2020:
+
+```{r warning=FALSE, message=F, results='hide'}
+getSymbols(c("WMT","IBDRY","AMZN","GRFS","LVMHF"), from="2020-01-01", to="2020-12-31")
+```
+
+Y obtenemos las rentabilidades relativas mensuales de las cinco empresas:
+
+```{r}
+rent_WMT_2020 <- Retornos(WMT)
+rent_IBDRY_2020 <- Retornos(IBDRY)
+rent_AMZN_2020 <- Retornos(AMZN)
+rent_GRFS_2020 <- Retornos(GRFS)
+rent_LVMHF_2020 <- Retornos(LVMHF)
+```
+
+Y creamos las carteras usando los datos del 2020 y los pesos previamente calculados:
+
+```{r}
+cartera_1_2020 <- 0.2*(rent_WMT_2020 + rent_IBDRY_2020 + rent_AMZN_2020 + rent_GRFS_2020 + rent_LVMHF_2020)
+names(cartera_1_2020) <- "cartera_1_2020"
+
+cartera_2_2020 <- rent_WMT_2020*p_ef[1] + rent_IBDRY_2020*p_ef[2] + rent_AMZN_2020*p_ef[3] + rent_GRFS_2020*p_ef[4] + rent_LVMHF_2020*p_ef[5]
+names(cartera_2_2020) <- "cartera_2_2020"
+
+cartera_3_2020 <- rent_WMT_2020*p_ef_c[1] + rent_IBDRY_2020*p_ef_c[2] + rent_AMZN_2020*p_ef_c[3] + rent_GRFS_2020*p_ef_c[4] + rent_LVMHF_2020*p_ef_c[5]
+names(cartera_3_2020) <- "cartera_3_2020"
+
+carteras_2020 <- data.frame(c1=cartera_1_2020, c2=cartera_2_2020, c3=cartera_3_2020)
+boxplot(carteras_2020)
+```
+
+Antes de comentar nada y para analizar con más detalle los boxplots anteriores nos fijamos en el summary de las carteras en el 2020:
+
+```{r}
+SummaryCartera(cartera_1_2020)
+SummaryCartera(cartera_2_2020)
+SummaryCartera(cartera_3_2020)
+```
+
+De entrada, tanto los boxplots como el summary de nuestras carteras en el 2020 muestran un crecimiento de la rentabilidad en todas las carteras pero también un aumento del riesgo en todas ellas. Con los datos históricos las carteras con mayor rentabilidad eran la 1 (**1.44%**), la 3 (**1.27%**) y la 2 (**1.13%**), en ese orden y el riesgo seguía ese mismo orden (**0.037**, **0.034** y **0.033**, respectivamente). En cambio en el 2020, el orden ha cambiado y las carteras con mayor rentabilidad son la 2 (**2.47%**), la 1 (**2.34%**) y la 3 (**2.32%**) en ese orden, y el riesgo no se mantiene en ese orden. Este hecho hace que la cartera número 2 sea la que mejor estrategia genera en el 2020, ya que es la que tiene mínimo riesgo (**0.056**) y máxima rentabilidad (**2.47%**).
+
+Para el gráfico de abajo a continuación, primeramente obtenemos los datos de ciertas carteras de referencia para comparar la performance de nuestras carteras con índices de referencia del mercado tanto en los datos históricos como en el año de evaluación 2020. Debido a que los 5 títulos seleccionados para esta práctica pertenecen a mercados distintos (*Bolsa de Nueva York NYSE*, el *índice bursátil español IBEX 35* y el *S&P 500 GSPC* principalmente) tenemos varias opciones. Por una parte podemos elegir uno de los dos mercados, ya sea por criterio "experto", el que consideremos más adequado o el que obtenga mejores resultados. Por otro lado, podemos comparar las carteras construidas con diferentes mercados.
+
+Dado que el índice de referencia *S&P 500, ^GSPC* hemos visto que es el que engloba el mayor número de empresas elegidas para nuestras carteras, lo usaremos como medio de comparación. Usamos las mismas fechas de los datos históricos utilizados en apartados anteriores y también la fecha del año 2020:
+
+```{r warning=FALSE, message=F, results='hide'}
+getSymbols("^GSPC", from="2012-01-01", to="2019-12-31")
+rent_GSPC <- Retornos(GSPC)
+
+getSymbols("^GSPC", from="2020-01-01", to="2020-12-31")
+rent_GSPC_2020 <- Retornos(GSPC)
+```
+
+A continuación mostramos la gráfica de todas las carteras, todos los años y referencias para notar todo lo descrito anteriormente:
+
+```{r}
+rentabilidad_1 <- apply(carteras, 2, mean)
+rentabilidad_2 <- apply(carteras_2020, 2, mean)
+
+riesgo_1 <- apply(carteras, 2, sd)
+riesgo_2 <- apply(carteras_2020, 2, sd)
+
+plot(rentabilidad_1~riesgo_1, col="green", pch=19, cex=1.2, xlim=c(0.03,0.11),ylim=c(-0.02,0.055), xlab="riesgo", ylab="rentabilidad")
+text(rentabilidad_1~riesgo_1, cex=0.9, font=2, pos=4)
+points(rentabilidad_2~riesgo_2, col="orange", pch=19, cex=1.2)
+text(rentabilidad_2~riesgo_2, cex=0.9, font=2, pos=4)
+
+rents_list_2020 <- list(rent_WMT_2020, rent_IBDRY_2020, rent_AMZN_2020, rent_GRFS_2020, rent_LVMHF_2020)
+rents_2020 <- data.frame(rents_list_2020)
+
+rentabilidad_3 <- apply(X = rents_2020, MARGIN = 2, FUN = mean)
+riesgo_3 <- apply(X = rents_2020, MARGIN = 2, FUN = sd)
+
+points(rentabilidad_3~riesgo_3, col="red", pch=19, cex=0.6)
+text(rentabilidad_3~riesgo_3, labels=NAMES, cex=0.9, font=2, pos=1)
+grid()
+
+points(c(mean(rent_GSPC),mean(rent_GSPC_2020))~c(sd(rent_GSPC),sd(rent_GSPC_2020)), col="blue", pch=19, cex=1.8)
+text(c(mean(rent_GSPC),mean(rent_GSPC_2020))~c(sd(rent_GSPC),sd(rent_GSPC_2020)), labels=c("S&P","S&P 2020"), cex=0.9, font=2, pos=1)
+```
+
+De nuevo, los **puntos naranjas** que representan las carteras del 2020 se caracterizan por una mayor rentabilidad y también un mayor riesgo. Es evidente que la cartera número 2 nos ofrece mayor rentabilidad a un menor riesgo. Por otro lado, los **puntos verdes** que representan las carteras con los datos históricos muestran el comportamiento descrito en los apartados anteriores, con un menor riesgo notable y una rentabilidad media ligeramente menor. Por último se muestran los títulos individuales en **rojo** a modo ilustrativo para notar el efecto que tienen la diversificación de carteras respecto a la disminución del riesgo soportado obteniendo rentabilidades similares.
+
+Además, a la hora de comparar nuestras carteras creadas con la cartera de referencia S&P 500, notamos el mismo comporatamiento respecto a la diferencia historica con la del 2020: en el **S&P 2020** el riesgo a subido notablemente y en cambio no se percibe un gran aumento de la rentabilidad (mismo comportamiento que las carteras naranjas) y el **S&P** en los datos historicos se asemeja mucho a las carteras preliminares (las marcadas en verde).
+
+De todos los resultados obtenidos en este apartado, podemos concluir que el aumento del riesgo en el año 2020 se debe principalmente a una serie de eventos que han afectado al mercado (COVID, pandemia, crisis, etc.). Siguiendo esta lógica, también esperaríamos que las rentabiliades fueran más bajas en el año 2020, pero en nuestro caso eso no es así tal y como refleja el gráfico. Sin embargo, este último punto depende en gran medida de los títulos seleccionados y de su rendimiento en el mercado. Además hay que destacar que el "aumento en la rentabilidad media" de 2020 que se puede observar es relativemente pequeño y no muestra un enorme crecimiento que podríamos considerar más "atípico". 
+
+## 3.2. Indicadores de performance
+
+Por último, utilizamos los indicadores de performance para analizar si nuestra cartera está dando una relación rentabilidad-riesgo mejor o peor que la cartera de referencia seleccionada. Destacar que no hay que confundir y pensar que estos indicadores nos están diciendo si nuestra cartera tiene rentabilidades positivas o rentabilidades negativas.
+
+```{r}
+sharpe <- c(SharpeRatio(R=cartera_1_2020, Rf=RISK_FREE_RATE, FUN="StdDev")[1],
+            SharpeRatio(R=cartera_2_2020, Rf=RISK_FREE_RATE, FUN="StdDev")[1],
+            SharpeRatio(R=cartera_3_2020, Rf=RISK_FREE_RATE, FUN="StdDev")[1],
+            SharpeRatio(R=rent_GSPC_2020, Rf=RISK_FREE_RATE, FUN="StdDev")[1])
+
+treynor <- c(TreynorRatio(Ra=cartera_1_2020, Rb=rent_GSPC_2020, Rf = RISK_FREE_RATE),
+             TreynorRatio(Ra=cartera_2_2020, Rb=rent_GSPC_2020, Rf = RISK_FREE_RATE),
+             TreynorRatio(Ra=cartera_3_2020, Rb=rent_GSPC_2020, Rf = RISK_FREE_RATE), "-")
+
+jensen <- c(CAPM.jensenAlpha(Ra=cartera_1_2020, Rb=rent_GSPC_2020, Rf = RISK_FREE_RATE),
+            CAPM.jensenAlpha(Ra=cartera_2_2020, Rb=rent_GSPC_2020, Rf = RISK_FREE_RATE),
+            CAPM.jensenAlpha(Ra=cartera_3_2020, Rb=rent_GSPC_2020, Rf = RISK_FREE_RATE), "-")
+
+data.frame(sharpe, treynor, jensen)
+
+```
+
+El **criterio de Sharpe** mide la prima de riesgo obtenida por cada unidad de riesgo soportado por la cartera:
+
+$$
+S_C = \frac{\bar{r_c} - r_f}{\sigma_c}
+$$
+
+Es decir, cuanto mayor sea el índice, mayor interés tendrá la cartera. En general el indicador de la cartera de análisis se suele comparar con la cartera de referencia. En este caso, obtenemos un valor de **0.15** en la cartera de referencia. Sin embargo, todas las otras carteras tiene un índice superior a ese (**0.34**, **0.42** y **0.37**), lo que significa que estas carteras estan teniendo un comportamiento mejor que la cartera de referencia. Con lo cuál podríamos decir que cualquiera de estas carteras que hubieramos construido en el perído de 2012 a 2019, si las hubieramos evaluado en el 2020 hubieran tenido un comportamiento mejor que la media del S&P 500. Dentro de todas ellas, la que tiene un mejor comportamiento es la cartera 2. Esto no significa que sea la que ofrece mayor rentabilidad, sino la que ofrece mejor relación rentabiliad-riesgo.
+
+El **criterio de Treynor** se basa en el modelo CAPM y define el precio medio de mercado por unidad de riesgo sistemático, y como medida de performance se utiliza la diferencia entre la rentabilidad del mercado y el ratio de Treynor:
+
+$$
+T_C = \frac{\bar{r_c} - r_f}{\beta_c} \qquad T'_C = \bar{r_m} - T_C
+$$
+
+Y el **criterio de Jensen** se basa también en el modelo CAPM y se conoce también como la rentabilidad diferencial:
+
+$$
+J_C = (\bar{r_c} - r_f) - \beta_c(\bar{r_m} - r_f)
+$$
+
+En la tabla vemos que obtenemos los mismos resultados que con el criterio de Sharpe, obteniedo valores positivos para Treynor y Jensen, y tomando valor máximo la cartera 2 en ambos casos. Como conclusión, estos indicadores reafirman que la **Cartera 2** seria la estrategia más adecuada en el sentido de que ofrece la mejor relación rentabilidad-riesgo en el 2020 con todos los análisis realizados.
+
+$$
+\\
+$$
+
+*Alex Carrillo Alza - Métodos Estadísticos para Finanzas y Seguros, Práctica 4. Estadística aplicada a la Gestión de Carteras*
+

@@ -1,0 +1,589 @@
+---
+title: "Práctica 1.  Estadística Actuarial No Vida"
+subtitle: "Métodos Estadísticos para Finanzas y Seguros"
+author: "Alex Carrillo Alza"
+date: "15 de noviembre de 2020"
+output:
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float:
+      collapsed: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Apartado 1
+
+Primeramente, leemos la base de datos asignada que corresponde con el número de siniestros de un asegurado en un año.
+
+```{r}
+# setwd(dirname(rstudioapi::getActiveDocumentContext()$path))  # Set current working directory.
+csv_name <- "based21.csv"
+
+siniestros <- read.csv2(csv_name, stringsAsFactors = F, header = F)
+siniestros <- siniestros[,1]  # Convertimos de DataFrame a vector.
+cat("Número de muestras: ", length(siniestros), "\n", head(siniestros, 10))
+```
+
+Antes de nada, visualizamos cuál es la naturaleza de los datos con los que vamos a trabajar.
+
+```{r}
+Histogram <- function(data, int=T) {
+  if (int) hist(data, breaks = length(unique(data)), col = "#327AB7", border = "white", main = "Distribución del número de siniestros", xlab = "Siniestros")
+  else hist(data, col = "#327AB7", border = "white", main = "Prob. tener algún siniestro", xlab = "Prob")
+}
+
+Histogram(siniestros)
+```
+
+A continuación, vemos cuáles son las frecuencias que toman estos valores así como su proporción en la base de datos. Para eso, construimos la siguiente tabla:
+
+```{r}
+freqs <- as.data.frame(table(siniestros), stringsAsFactors = F)
+freqs$prob <- freqs$Freq / sum(freqs$Freq)
+freqs
+```
+
+Y calculamos la media y la variancia de los datos:
+
+```{r}
+cat("    Media:", mean(siniestros), "\nVariancia:", var(siniestros))
+```
+
+### 1.1. Ajuste Poisson, Binomial Negativa y Poisson Cero Inflada
+
+```{r message=F, warning=F}
+library(fitdistrplus)
+library(gamlss)
+```
+
+Ajustamos los datos con tres distribuciones: una **Poisson**, una **Binomial Negativa** y una **Poisson Cero Inflada**, usando la librería `fitdistrplus`. Note que para la ZIP necesitamos asignarle unos valores iniciales para los parametros sigma y mu, correspondientes a la probabilidad de ceros de la Bernoulli que define a la ZIP ($\pi$) y la media de siniestros $\mu$, para que empieze la iteración de la búsqueda del valor.
+
+```{r warning=F}
+fitP <- fitdist(siniestros, distr = "pois")
+
+fitNB <- fitdist(siniestros, distr = "nbinom")
+
+fitZIP <- fitdist(siniestros, distr = "ZIP", start = list(sigma = sum(siniestros==0)/length(siniestros), mu = mean(siniestros)))
+```
+
+Y comparamos los tres ajustes.
+
+```{r}
+(stats <- gofstat(list(fitP, fitNB, fitZIP), fitnames = c("Poisson", "NegBinomial", "ZI-Poisson")))
+```
+
+Si observamos la tabla de *Chi-squared* podemos ver cuál es el ajuste frente a las frecuencias teóricas (`abscounts`): en todos los casos (0, 1, 2, 3 y >3) la Poisson consigue un valor similar, la Binomial Negativa consigue un valor todavía más cercano al teórico y la Poisson Cero Inflada consigue ajustar aún más los valores con una diferencia pequeña de decenas, lo que ya nos da una intuición de que la ZIP parece ser la mejor distribución para estos datos.
+
+Efectivamente, para dar con la conclusión nos basamos en el *Criterio de Información de Akaike (AIC)*, que nos permite comparar los tres modelos entre si, siendo el mejor el que obtenga un valor más pequeño en su AIC.
+
+```{r}
+print(c("Mejor modelo (AIC más bajo): ", stats$aic[which.min(stats$aic)]))
+```
+
+Vemos que efectivamente la distribución Poisson Cero Inflada es la que mejor se ajusta a nuestros datos.
+
+Por lo tanto, con la información de la misma tabla, el test indica que no se puede rechazar que esos datos sean una Poisson Cero Inflada, y para las otras dos distribuciones se rechaza el test, tal y como esperabamos que tenia que pasar.
+
+```{r}
+chi <- data.frame(pvalue = stats$chisqpvalue)
+chi$result <- ifelse(chi$pvalue > 0.05,
+                     "You cannot conclude that the data do not follow the distribution (Fail to reject H0)",
+                     "The data do not follow the distribution (Reject H0)")
+chi
+```
+
+Adicionalmente, representamos los ajustes anteriores de manera gráfica para tener una intuición más de que la Binomial Negativa se ajusta mejor que la Poisson, y de que la Poisson Cero Inflada se ajusta mejor que la Binomial Negativa.
+
+```{r}
+PlotFit <- function(data, dist, title) {
+  x <- as.numeric(data$siniestros)
+  y <- data$prob
+  leg.txt <- c("data", "fit")
+  plot(x, y, xlab = "data", ylab = "prob", main = paste(title, ".  Empirical vs fitted distributions"), type = "l", col = "red", lwd = 1)
+  lines(x, dist, col = "blue", lwd = 1, lty=2)
+  legend("topright", leg = leg.txt, col = c("red","blue"), lty=1:2)
+}
+```
+
+A parte de la función `PlotFit` para graficar los ajustes, creamos las funciones de densidad con los parámetros estimados adequados para cada distribución. Esto nos servirá también para calcular la probabilidad de cero siniestros posteriormente.
+
+```{r}
+dens_P <- function(x) dpois(x, lambda = fitP$estimate)
+dens_NB <- function(x) dnbinom(x, size = fitNB$estimate[[1]], mu = fitNB$estimate[[2]])
+dens_ZIP <- function(x) dZIP(x, mu = fitZIP$estimate[[2]], sigma = fitZIP$estimate[[1]])
+```
+
+Para las frecuencias de 0 a 7 siniestros calculamos las distintas probabilidades.
+
+```{r}
+values <- as.numeric(freqs$siniestros)
+dist_fit_P <- dens_P(values)
+dist_fit_NB <- dens_NB(values)
+dist_fit_ZIP <- dens_ZIP(values)
+```
+
+Y visualizamos su ajuste.
+
+```{r}
+PlotFit(freqs, dist_fit_P, "Poisson")
+PlotFit(freqs, dist_fit_NB, "NegBinomial")
+PlotFit(freqs, dist_fit_ZIP, "ZI-Poisson")
+```
+
+Claramente, las conclusiones dichas anteriormente se confirman.
+
+Finalmente, calculamos la probabilidad de cero siniestros usando las funciones creadas anteriormente:
+
+```{r}
+distribuciones <- c("Poisson", "NegBinomial", "ZI-Poisson", "BASE DE DATOS")
+prob_0_siniestros <- c(dens_P(0), dens_NB(0), dens_ZIP(0), subset(freqs, freqs$siniestros == 0)$prob)
+```
+
+Y también la esperanza del número de siniestros, considerando que:
+
+$$
+\mathop{\mathbb{E}}[X] = \lambda \qquad \text{si} \qquad X \sim P(\lambda) \\
+\mathop{\mathbb{E}}[X] = \frac{pr}{1-p} \qquad \text{si} \qquad X \sim BN(r,p) \\
+\mathop{\mathbb{E}}[X] = \lambda(1- \pi) \qquad \text{si} \qquad X \sim ZIP(\pi, \lambda)
+$$
+
+```{r}
+siniestros_esperados <- c(fitP$estimate[[1]], fitNB$estimate[[2]], fitZIP$estimate[[2]]*(1 - fitZIP$estimate[[1]]), mean(siniestros))
+```
+
+De manera que obtenemos los siguientes resultados:
+
+```{r}
+(resultados <- data.frame(distribuciones, prob_0_siniestros, siniestros_esperados))
+```
+
+Por un lado, en cuanto a la esperanza del número de siniestros, podemos ver que los tres ajustes se acercan a la media de la base de datos, lo cuál es sencillo que sea así. Por otro lado, la probabilidad de cero siniestros se ajusta mejor en la Binomial Negativa y en la Poisson Cero Inflada, siendo esta última la que mejor se ajusta a los datos con cuatro decimales significativos, lo que reafirma las conclusiones desprendidas anteriormente.
+
+### 1.2. Poisson Cero Modificada
+
+```{r message=F, warning=F}
+library(actuar)
+```
+
+Ahora, consideramos una nueva distribución llamada **Poisson Cero Modificada**. De la documentación de R de la función `zmpois` vemos cómo se expresa su función de probabilidad:
+
+$$
+\begin{equation}
+  P(X=k)=\begin{cases}
+    p_0, & \text{si}\quad k=0.\\
+    C\frac{\lambda^k e^{-\lambda}}{k!} & \text{en otro caso}
+  \end{cases}
+\end{equation}
+$$
+
+Donde $C$ es la constante $\frac{1-p_0}{1-e^{-\lambda}}$ y teniendo en cuenta que $p_0$ es la probabilidad en 0 (asociada a la frecuencia de ceros).
+
+Es decir, tanto en el caso de $k=0$ como de $k>0$, se diferencia ligeramente con la distribución Poisson Cero Inflada vista en clase en la manera de introducir esa información asociada de la frecuencia de ceros, principalmente:
+
+$$
+\begin{equation}
+  P(X=k)=\begin{cases}
+    p_0 + (1-p_0)\cdot e^{-\lambda}, & \text{si}\quad k=0.\\
+    (1-p_0)\frac{\lambda^k e^{-\lambda}}{k!} & \text{si}\quad k=1,2,...
+  \end{cases}
+\end{equation}
+$$
+
+Además, buscando más información sobre esta distribución encontramos que "[...] la versión cero modificada de la distribución de Poisson (obviamente) generaliza la versión **cero truncada** [...]". Es por ello que la estrecha relación que mantiene con la versión truncada sirve para definir los momentos de la versión modificada:
+
+$$
+\mathop{\mathbb{E}}[X] = \mu(1-p_0) \\
+Var[X] = \sigma^2(1-p_o) + \sigma^2 p_0(1-p_0)
+$$
+
+Donde $\mu$ y $\sigma^2$ son la media y la variancia de la **Poisson Cero Truncada** que definimos a continuación:
+
+$$
+P(X=k | X>0) = \frac{\lambda^k}{(e^\lambda-1) \cdot k!}
+$$
+
+Es decir, es la distribución de probabilidad condicional de una variable aleatoria distribuida Poisson, dado que el valor de la variable aleatoria no es cero. Su media y su variancia son las siguientes:
+
+$$
+\mathop{\mathbb{E}}[X] = \frac{\lambda}{1-e^{-\lambda}} = \mu \\
+Var[X] = \mathop{\mathbb{E}}[X] \cdot (1 + \lambda - \mathop{\mathbb{E}}[X]) = \sigma^2
+$$
+
+Con todo lo anterior, procedemos a ajustar nuestros datos con esta nueva distribución **Poisson Cero Modificada**. Para ello, debemos definir las funciones de densidad y distribución de la modificada antes de usarlas en la función `fitdist`.
+
+```{r warning=F}
+dzero_modified_poisson <- function(x, lambda, p0) dzmpois(x, lambda, p0)
+pzero_modified_poisson <- function(x, lambda, p0) pzmpois(x, lambda, p0)
+
+fitZMP <- fitdist(siniestros, distr = "zero_modified_poisson", start = list(p0 = sum(siniestros==0)/length(siniestros), lambda = mean(siniestros)))
+gofstat(list(fitZIP, fitZMP), fitnames = c("ZI-Poisson","ZM-Poisson"))
+```
+
+En cuanto al ajuste de la distribución, nos fijamos en que el AIC resulta ser igual al obtenido con la Poisson Cero Inflada, lo cual indica que ambas distribuciones pueden llegar a ser igual de válidas para el proposito de nuestros datos. Al final, la versión cero modificada tiene una relación estrecha con la versión inflada, como se ha explicado en el apartado anterior.
+
+De nuevo, igual que en el apartado 1.1, definimos la nueva función de densidad con los parametros estimados, ajustamos los frecuencias de los siniestros y vemos cómo se desempeñan visualmente.
+
+```{r}
+dens_ZMP <- function(x) dzmpois(x, lambda = fitZMP$estimate[[2]], p0 = fitZMP$estimate[[1]])
+
+dist_fit_ZMP <- dens_ZMP(values)
+
+PlotFit(freqs, dist_fit_ZMP, "ZM-Poisson")
+```
+
+Como se puede observar, el ajuste "casi perfecto" es el mismo que en el caso de la Poisson Cero Inflada, tal y como se ha visto en la comparación del AIC anteriormente.
+
+Por último, añadimos la probabilidad de cero siniestros y la esperanza del número de siniestros a la tabla calculada en el apartado anterior, y usando la fórmula para la esperanza de la ZMF:
+
+$$
+\mathop{\mathbb{E}}[X] = \mu(1-p_0) \quad \text{para Poisson Cero Modificada} \\
+\text{donde}\quad \mathop{\mathbb{E}}[X] = \frac{\lambda}{1-e^{-\lambda}} = \mu \quad \text{para Poisson Cero Truncada}
+$$
+
+```{r}
+distribuciones <- c(distribuciones, "ZeroModifiedPoisson")
+prob_0_siniestros <- c(prob_0_siniestros, dens_ZMP(0))
+
+lambda <- fitZMP$estimate[[2]]
+zero_truncated_mean <- lambda / (1 - exp(1)^(-lambda))
+siniestros_esperados <- c(siniestros_esperados, (1 - fitZMP$estimate[[1]])*zero_truncated_mean)
+
+(resultados <- data.frame(distribuciones, prob_0_siniestros, siniestros_esperados))
+```
+
+De nuevo, vemos que el valor de los siniestros esperados es el mismo para todas las distribuciones y, en el caso de la probabilidad de cero siniestros, la versión cero modificada ajusta el mismo valor que la ZIP, y por ende, el de la base de datos, lo que reafirma la conclusión dada en los apartados anteriores.
+
+## Apartado 2
+
+Primeramente, leemos la base de datos asignada que contiene 35.168 observaciones con las variables:
+
+- `Edad`
+- `Coste` (coste total de los siniestros del asegurado)
+- `Antig_c` (antigüedad del carnet)
+- `Expos` (exposición en años)
+- `Nsin` (número de siniestros)
+- `Marca` (marca del vehículo)
+- `Alarma` (presencia de alarma)
+- `Sexo`
+- `Zona` (zona habitual de conducción, 3 categorías)
+- `Uso` (uso principal del vehículo).
+
+Comprobamos cuáles son los tipos de cada variable y observamos que de entrada son correctos:
+
+```{r}
+csv_name <- "autos2021.csv"
+
+autos <- read.csv2(csv_name, sep = ',', stringsAsFactors = T, dec = ".")
+str(autos)
+```
+
+- *INTEGER*: `edad`, `antig_c` y `nsin`
+- *NUMERIC*: `coste` y `expos`
+- *FACTOR*: `marca`, `alarma`, `sexo`, `zona` y `uso`
+
+```{r}
+head(autos)
+```
+
+
+### 2.1. Regresión Poisson para el número de siniestros
+
+Antes de nada, visualizamos cuál es la naturaleza de los datos con los que vamos a trabajar:
+
+```{r}
+Histogram(autos$nsin)
+```
+
+A continuación, vemos cuales son las frecuencias que toman estos valores así como su proporción en la base de datos. Para eso, construimos la siguiente tabla:
+
+```{r}
+freqs <- as.data.frame(table(autos$nsin), stringsAsFactors = F)
+freqs$prob <- round(freqs$Freq / sum(freqs$Freq), 8)
+freqs
+```
+
+Y calculamos la media y la variancia de los datos:
+
+```{r}
+cat("    Media:", mean(autos$nsin), "\nVariancia:", var(autos$nsin))
+```
+
+Ajustamos un modelo de **regresión de Poisson** para el número de siniestros, usando en un principio todas las variables excepto el `Coste`, ya que estamos suponiendo que el coste por siniestro y el número de siniestros es independiente. Por lo tanto, usamos las variables `Edad`, `Antig_c`, `Marca`, `Alarama`, `Sexo`, `Zona` y `Uso`, y la variable `Expos` (exposición en años) la cual introducimos como offset en logaritmo, tal y como vimos en clase:
+
+```{r}
+glm_Poisson <- glm(nsin ~ edad + antig_c + marca + alarma + sexo + zona + uso,
+                   offset = log(expos),
+                   data = autos,
+                   family = poisson(link = log))
+```
+
+A continuación, mostramos los niveles que toman las variables factores para tener una mejor interpretación del modelo en base a las categorias de referencia:
+
+```{r}
+# marca, alarma, sexo, zona y uso
+list(marca = sort(levels(autos$marca)), alarma = sort(levels(autos$alarma)), sexo = sort(levels(autos$sexo)),
+     zona = sort(levels(autos$zona)), uso = sort(levels(autos$uso)))
+```
+
+Fijémonos en el summary del modelo ajustado:
+
+```{r}
+summary(glm_Poisson)
+```
+
+De entrada, mencionamos cuáles son las variables significativas que aportan información al modelo:
+
+- **edad**: coeficiente negativo y significativo. Para asegurados más jovenes se da un mayor número de siniestros.
+- *marcas*: la categoria de referencia es "ALFA ROMEO". Por lo tanto, como las marcas **AUDI**, **BMW**, **DAEWOO**, **DAIHATSU**, **FORD**, **GM**, **HONDA**, **LADA**, **MAZDA**, **MERCEDES-BENZ**, **NISSAN**, **PEUGEOT**, **RENAULT**, **SUBARU**, **SUZUKI**, **TOYOTA**, **VOLKSWAGEN** y **VOLVO** tienen coeficientes negativos y significativos, estos asegurados tienen un número esperado de accidentes menor que los de la marca de referencia.
+- **alarmasi**: coeficiente negativo y significativo. Los asegurados con presencia de alarma sufren un menor número esperado de siniestros (la referencia es lo opuesto: "alarma NO").
+- **sexoM**: coeficiente positivo y significativo. Los hombres tiene un mayor número de siniestros que las mujeres ("sexo F" categoria de referencia).
+- **zonaSemi urbano** y **zonaUrbano**: coeficientes positivos y significativos. Los asegurados que conducen por vías semi-urbanas y urbanas tienen un número esperado de siniestros mayor que los que conducen por zonas de tipo "rural" (categoria de referencia).
+- **usoTrabajo - uso cotidiano** y **usoTrabajo - uso ocasional**: coeficientes negativos y significativos. Los asegurados que usan el vehículo para el trabajo con uso cotidiano o ocasional tienen un número esperado de siniestros menor que aquellos que lo utilizan para "ocio" (categoria de referencia).
+
+Aplicando el sentido común, vemos que las conclusiones descritas arriba en general tienen sentido respecto a las características de determinados asegurados.
+
+Adicionalmente, destacamos que las variables `edad` y `antig_c` las hemos tratado como numericas (int) y vamos a comprobar qué ocurre al crear grupos de estas variables. Primeramente, probamos con 5 grupos de edad:
+
+```{r}
+autos$edad <- cut(autos$edad, breaks = 5, dig.lab = 2)
+levels(autos$edad)
+```
+
+```{r}
+glm_Poisson_edad <- glm(nsin ~ edad + antig_c + marca + alarma + sexo + zona + uso,
+                        offset = log(expos),
+                        data = autos,
+                        family = poisson(link = log))
+summary(glm_Poisson_edad)
+```
+
+Naturalmente, como no hemos modificado nada en las otras variables, estas siguen teniendo la misma significancia y positividad, así que nos fijamos en los 5 grupos de edad que hemos creado. El grupo de referencia es el de 18 a 32 años, así que los grupos:
+
+- **edad(32,46]**: coeficiente negativo y significativo (-0.106704). Los asegurados de entre 32 y 46 años tienen un número esperado de siniestros menor que el grupo de más joven (el de referencia).
+- **edad(59,73]**: coeficiente negativo y significativo (-0.386762). Los asegurados de entre 59 y 73 años tienen un número esperado de siniestros mucho menor que el grupo más joven (el de referencia).
+
+Además vemos cómo el AIC ha disminuido (aunque poco).
+
+De la misma manera, hacemos lo mismo con la variable `antig_c`, generando también 5 grupos:
+
+```{r}
+autos$antig_c <- cut(autos$antig_c, breaks = 5, dig.lab = 2)
+levels(autos$antig_c)
+```
+
+```{r}
+glm_Poisson_edad_antig <- glm(nsin ~ edad + antig_c + marca + alarma + sexo + zona + uso,
+                        offset = log(expos),
+                        data = autos,
+                        family = poisson(link = log))
+summary(glm_Poisson_edad_antig)
+```
+
+Lo primero en lo que nos fijamos es que ahora los coeficientes de todos los grupos de edad son significativos y negativos, es decir, todos (y en particular los grupos (46,62] y (62,77]) tienen un número esperado de siniestros menor que el grupo más joven. Por otro lado, ahora la variable "antiguedad del carnet" solo es significativa para el grupo (31,46] y tiene coeficiente negativo, lo que indica que este grupo tiene un menor número de siniestros esperados en comparación con el grupo de referencia (de 0 a 15 años de antiguedad).
+
+Finalmente, comparamos los AIC de estos tres modelos:
+
+```{r}
+which.min(list("glm_Poisson" = glm_Poisson$aic,
+               "glm_Poisson_edad" = glm_Poisson_edad$aic,
+               "glm_Poisson_edad_antig" = glm_Poisson_edad_antig$aic))
+```
+
+Vemos que pese a que los tres modelos tienen un AIC muy similar, el último tiene un mejor AIC ($33119.56$). Además, como las compañias aseguradoras suelen preferir tener grupos de tipos de clientes (edad, antiguedad, perfil de conducción, etc.), elegimos el tercer modelo para la comparación en los apartados siguientes.
+
+A modo ilustrativo, mostramos la tabla del número de siniestros totales el ajuste del modelo:
+
+```{r}
+table_Poisson <- round(c(sum(dpois(0, glm_Poisson_edad_antig$fitted.values)),
+                         sum(dpois(1, glm_Poisson_edad_antig$fitted.values)),
+                         sum(dpois(2, glm_Poisson_edad_antig$fitted.values)),
+                         sum(dpois(3, glm_Poisson_edad_antig$fitted.values)),
+                         sum(dpois(4, glm_Poisson_edad_antig$fitted.values)),
+                         sum(dpois(5, glm_Poisson_edad_antig$fitted.values))))
+freqs$Predicted <- table_Poisson
+freqs$prob_Predicted <- round(freqs$Freq / sum(freqs$Predicted), 8)
+freqs
+```
+
+A continuación, calulamos para cada asegurado en la cartera cuál es su **probabilidad de tener algún siniestro** y añadimos esa información en una columna en la base de datos:
+
+```{r}
+prob_siniestro <- 1 - dpois(0, predict(glm_Poisson_edad_antig, autos, type="response"))
+
+autos$prob_siniestro <- prob_siniestro
+head(autos)
+```
+
+Note que en este caso hemos usado la función `predict` que simplemente hace uso de los `.$fitted.values` del modelo, para ver que funciona igual (es lo mismo que usar los fitted values como hemos hecho en la tabla de frecuencias anterior).
+
+Por último, vemos cómo se distribuye esta probabilidad calculada para distinguir entre tres grupos de asegurados, digamos los que tengan respectivamente una baja, media y alta probabilidad de tener algún siniestro:
+
+```{r}
+Histogram(prob_siniestro, int = F)
+```
+
+A modo de ejemplo, podemos ver cuáles son las características de algunos de estos tres perfiles que hemos definido:
+
+```{r}
+baja <- which(prob_siniestro > 0 & prob_siniestro < 0.05)[[1]]
+media <- which(prob_siniestro > 0.15 & prob_siniestro < 0.2)[[1]]
+alta <- which(prob_siniestro > 0.35 & prob_siniestro < 0.4)[[1]]
+
+autos[baja,]
+autos[media,]
+autos[alta,]
+```
+
+### 2.2. Regresión Binomial Negativa para el número de siniestros
+
+En este apartado realizamos un ajuste con un modelo de **regresión Binomial Negativo**, de nuevo para el número de siniestros. En este caso, decidimos mantener las variables `edad` y `antig_c` con los grupos que hemos asignado antes por las razones mencionadas anteriormente (más interpretabilidad en el mundo asegurador y mejor AIC obtenido).
+
+```{r}
+glm_NegBinomial <- glm.nb(nsin ~ edad + antig_c + marca + alarma + sexo + zona + uso + offset(log(expos)),
+                          data = autos,
+                          link = log)
+summary(glm_NegBinomial)
+
+```
+
+Observando el summary podemos ver que la interpretación de los coeficientes significativos es la misma que para el caso Poisson y se pueden usar las mismas descripciones dichas anteriormente.
+
+```{r}
+(aics <- data.frame(modelo = c("Poisson","NegBinomial"), aic = c(glm_Poisson_edad_antig$aic, glm_NegBinomial$aic)))
+```
+
+
+En cuanto al AIC, vemos que la regresión **Binomial Negativa** obtiene un valor de 33002 (menor que en el caso Poisson) y podemos concluir que este **modelo es preferible** para ajustar nuestros datos.
+
+### 2.3. Modelo de regresión para el coste
+
+Ahora vamos a aplicar modelos probabilísticos para el coste de los siniestros, cuyos valores observados de dicha variable son independientes e idénticamente distribuidos, es decir:
+
+- La cuantía del coste del siniestro es independiente del asegurado que lo haya ocasionado
+- Los costes de los siniestros provocados por un mismo asegurado también son independientes
+- La cuantía del coste de un siniestro es independiente del número de siniestros provocados por un mismo asegurado
+
+Con estas asunciones (algunas de ellas ya mencionadas en el Apartado 1 de la práctica), ajustamos primero un **modelo Gamma**. Note que usamos sólo aquellos asegurados que tienen un valor positivo para el coste de total de los siniestros:
+
+```{r}
+autos_coste <- subset(autos, autos$coste > 0)
+
+glm_Gamma <- glm(coste ~ edad + antig_c + marca + alarma + sexo + zona + uso,
+                 data = autos_coste,
+                 family = Gamma(link = "log"))
+
+summary(glm_Gamma)
+```
+
+Nos fijamos en cuáles son las variables significativas que aportan información al modelo:
+
+- *marcas*: la categoria de referencia es "ALFA ROMEO". Por lo tanto, como las marcas **Autres**, **SAAB** y **SEAT** tienen coeficientes negativos y significativos, estos asegurados tienen un coste esperado de los siniestros menor que los de la marca de referencia.
+
+- **alarmasi**: coeficiente negativo y significativo. Los asegurados con presencia de alarma asumen un coste esperado de los siniestros menor (la referencia es lo opuesto: “alarma NO”).
+
+- **sexoM**: coeficiente positivo y significativo. Los hombres tiene un mayor coste esperando de los siniestros que las mujeres (“sexo F” categoria de referencia).
+
+- **usoTrabajo - uso ocasional**: coeficiente negativo y significativo. Los asegurados que usan el vehículo para trabajar con uso ocasional tienen un coste esperado de los siniestros menor que aquellos que lo utilizan para "ocio" (categoria de referencia).
+
+Observamos el AIC (101503) y comparamos más adelante con un modelo **Log-Normal**:
+
+```{r}
+lm_LogNormal <- lm(log(coste) ~ edad + antig_c + marca + alarma + sexo + zona + uso,
+                    data = autos_coste)
+
+summary(lm_LogNormal)
+```
+
+- *marca* **SUZUKI**: coeficiente positivo y significativo. Los asegurados de esa marca tienen una coste mayor esperado de los siniestros que los de la marca de referencia.
+
+- **sexoM**: coeficiente positivo y significativo. Los hombres tiene un mayor coste esperando de los siniestros que las mujeres (“sexo F” categoria de referencia).
+
+Para obtener el AIC de este modelo (en el cual no hemos usado un GLM), utilizamos al función `AIC` y hacemos la corrección del AIC para la Log-Normal vista en clase:
+
+```{r}
+(correccion_AIC <- AIC(lm_LogNormal) + 2*sum(log(autos_coste$coste)))
+```
+
+Vemos que el AIC para la Log-Normal es menor que el de la Gamma, así que de momento nos quedamos con un mejor ajuste de la Log-Normal.
+
+Probemos ahora con otro modelo más, la **Inversa Gaussiana**:
+
+```{r warning=F}
+glm_InvGauss <- glm(coste ~ edad + antig_c + marca + alarma + sexo + zona + uso,
+                    data = autos_coste,
+                    family = inverse.gaussian(link = "log"),
+                    start = coefficients(glm_Gamma))
+summary(glm_InvGauss)
+```
+
+Vemos que la interpretación de los coeficientes es la misma que para el caso del modelo Gamma explicados anteriormente.
+
+Por último, comparamos los AIC para elegir el mejor modelo:
+
+```{r}
+(aics <- data.frame(modelo = c("Gamma","LogNormal","InvGauss"), aic = c(glm_Gamma$aic, correccion_AIC, glm_InvGauss$aic)))
+```
+
+Vemos que en este caso, el modelo de regresión **LogNormal** para el coste de los siniestros es el **modelo preferible** ya que es el que mejor se ajusta a nuestros datos.
+
+Por último, guardamos el coste esperado de los siniestros en una nueva columna de la base de datos (poniendo el coste solo para aquellos que tenian un coste positivo, es decir, los asegurados usados para el entrenamiento del modelo), que usaremos en el siguiente apartado:
+
+```{r}
+pred_coste <- exp(lm_LogNormal$fitted.values)  # inversa del log(coste) --> exponencial !
+
+autos$pred_coste <- 0
+autos$pred_coste[as.numeric(names(pred_coste))] <- pred_coste
+
+head(autos, 12)
+```
+
+### 2.4. Cálculo de la prima pura
+
+Finalmente, calculamos para cada asegurado en la cartera cuál será su prima pura el año que viene.
+
+Sabemos que la prima total de un seguro se debe de basar en el riesgo que asume la compañia seguradora. La prima pura es el principal componente de la prima total y se define como la esperanza matemática de la siniestralidad total. Para ello, tomamos el producto de las esperanzas de la frecuencia de siniestros y de sus cuantías:
+
+$$
+\text{Prima Pura} = \mathop{\mathbb{E}}[\text{Siniestralidad total}] = \mathop{\mathbb{E}}[\text{frec. de siniestros}] \cdot \mathop{\mathbb{E}}[\text{coste}]
+$$
+
+Es decir, que la prima pura toma un valor muy cercano al valor esperado de la siniestralidad total (por al ley de los grandes números).
+
+Por un lado, en nuestro caso, disponemos de la probabilidad de tener algun siniestro y de la predicción del coste, lo que podriamos ponderar para obtener cierta estimación de la prima pura, pero de la que no estamos muy seguros que se calcule así (es un planteamiento incorrecto):
+
+```{r}
+autos$prima_pura <- autos$prob_siniestro * autos$pred_coste
+head(autos)
+```
+
+Por otro lado, como de lo que disponemos es del coste estimado total de los siniestros del asegurado, podemos asumir que ese mismo valor será el de la prima pura.
+
+Veamos cómo se distribuye esta prima pura calculada para distinguir entre tres grupos de asegurados, digamos lo que tengan respectivamente una baja, media y alta prima:
+
+```{r}
+hist(autos$pred_coste)
+```
+
+A modo de ejemplo, podemos ver cuáles son las características de algunos de estos tres perfiles que hemos definido:
+
+```{r}
+baja <- which(autos$pred_coste > 1000 & autos$pred_coste < 2000)[[1]]
+media <- which(autos$pred_coste > 2500 & autos$pred_coste < 4000)[[1]]
+alta <- which(autos$pred_coste > 4000 & autos$pred_coste < 6000)[[1]]
+
+autos[baja,]
+autos[media,]
+autos[alta,]
+```
+
+Por lo tanto, la cantidad que recaudará la compañia el año que viene con el cobro de primas puras es simplemente la suma de esta ultima columna que hemos calculado anteriormente (en el planteamiento que consideramos incorrecto) o, en otro caso, la suma del coste total estimado. Mostramos a continuación ambos resultados:
+
+```{r}
+cat("Cobro total en Primas Puras #1:", sum(autos$prima_pura, na.rm = T),
+    "\nCobro total en Primas Puras #2:", sum(autos$pred_coste, na.rm = T))
+```
+

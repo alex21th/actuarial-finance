@@ -1,0 +1,267 @@
+---
+title: "Práctica 2.  Estadística Actuarial Vida"
+subtitle: "Métodos Estadísticos para Finanzas y Seguros"
+author: "Alex Carrillo Alza"
+date: "6 de diciembre de 2020"
+output:
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float:
+      collapsed: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_libraries, include=FALSE}
+library(lifecontingencies)
+library(knitr)
+```
+
+# Apartado 1
+
+A partir del archivo PASEM2010.CSV crea una tabla de vida conjunta en R.
+
+```{r}
+csv_name <- "PASEM2010.csv"
+
+df <- read.csv2("pasem2010.csv")
+
+df_H <- df[,-3]  # quitamos la última columna que incluye a las mujeres
+names(df_H) <- c("x","qx")  # necesitamos indicar que la primera columna es "x", la edad, y la segunda es "qx"
+
+df_H_Lt <- probs2lifetable(df_H[,"qx"], type = "qx", name = "PASEM 2010 Hombres")
+head(as(df_H_Lt, "data.frame"))
+```
+
+# Apartado 2 (3 puntos)
+
+Para un asegurado (hombre) de 55 años, calcula las siguientes probabilidades:
+
+**a) Probabilidad de que fallezca antes de cumplir los 57 años.**
+
+Usamos la *Probabilidad temporal de fallecimiento*, $_nq_x$:
+
+$$
+_2q_{55} = 1 - _2p_{55} = 1 - \frac{l_{57}}{l_{55}}
+$$
+
+```{r}
+prob_temp_falle <- qxt(df_H_Lt, 55, 2)
+
+cat("    Cálculo a mano:", 1 - df_H_Lt@lx[58]/df_H_Lt@lx[56],
+    "\nComprovación con R:", prob_temp_falle)
+```
+
+**b) Probabilidad de que fallezca entre los 57 y los 59 años.**
+
+Usamos la *Probabilidad diferida "m" años y temporal "n" años de fallecimiento*, $_{m/m}q_{x}$:
+
+$$
+_{2/2}q_{55} = _2p_{55} \cdot _2q_{57} = \frac{l_{57}}{l_{55}} \cdot \frac{l_{57} - l_{59}}{l_{57}}
+$$
+
+```{r}
+prob_dife_falle <- pxt(df_H_Lt, 55, 2)*qxt(df_H_Lt, 57, 2)
+
+cat("    Cálculo a mano:", df_H_Lt@lx[58]/df_H_Lt@lx[56] * (df_H_Lt@lx[58] - df_H_Lt@lx[60])/df_H_Lt@lx[58],
+    "\nComprovación con R:", prob_dife_falle)
+```
+
+**c) En base a estas probabilidades, calcula la prima única que pagaría este asegurado de 55 años si contratase un seguro en el que los beneficiarios cobrasen las siguientes cantidades en los siguientes casos:**
+
+- Si fallece antes de cumplir los 57 años, los beneficiarios cobrarían 80000 euros el día en que el asegurado hubiese cumplido los 57 años.
+- Si en cambio fallece entre los 57 y los 59 años, entonces los beneficiarios cobrarían 50000 euros el día en que el asegurado hubiese cumplido los 59 años.
+
+Datos:
+
+- Interés técnico: 1.5%
+- Tabla de vida: PASEM 2010.
+
+Exponemos cuáles son los valores y sus respectivas probabilidades para cada escenario posible, usando la *Probabilidad temporal de fallecimiento* ($_nq_x$), la *Probabilidad diferida "m" años y temporal "n" años de fallecimiento* ($_{m/n}q_{x}$), y la *Probabilidad temporal de superviviencia* ($_np_x$):
+
+$$
+\text{Valores caso A:} \quad 80,000 \cdot (1+1.5\%)^{-2} \\
+\text{Valores caso B:} \quad 50,000 \cdot (1+1.5\%)^{-4} \\
+\text{Valores caso C:} \quad 0 \\
+\qquad \\
+\text{Probabilidad caso A:} \quad _2q_{55} \\
+\text{Probabilidad caso B:} \quad _{2/2}q_{55} \\
+\text{Probabilidad caso C:} \quad _4p_{55} \\
+$$
+
+Comprobamos que la suma de dichas probabilidades es la unidad:
+
+```{r}
+prob_temp_falle + prob_dife_falle + pxt(df_H_Lt, 55, 4)
+```
+
+Por tanto, definimos la prima única que pagaría este asegurado de la siguiente manera:
+
+$$
+\text{Prima única} = 80,000 \cdot (1+1.5\%)^{-2} \cdot _2q_{55} + 50,000 \cdot (1+1.5\%)^{-4} \cdot _{2/2}q_{55}
+$$
+
+Y calculamos su valor:
+
+```{r}
+int <- 0.015
+cat("Prima única [€]:", 80000*(1+int)^(-2)*prob_temp_falle + 50000*(1+int)^(-4)*prob_dife_falle)
+```
+
+**d) ¿Cuál es la probabilidad de que la compañía aseguradora no tenga que pagar ninguna indemnización?**
+
+En el apartado anterior ya hemos descrito cuál seria esa probabilidad, la *Probabilidad temporal de superviviencia* ($_np_x$): $_4p_{55}$, que calculamos a continuación:
+
+```{r}
+cat("Probabilidad (no pagar):", pxt(df_H_Lt, 55, 4))
+```
+
+
+# Apartado 3 (3 puntos)
+
+Para una pareja formada por un hombre de 50 años y una mujer de 49 calcula las siguientes probabilidades:
+
+Primero, creamos una nueva tabla de vida para ambos individuos, tanto hombres como mujeres:
+
+```{r}
+df_M <- df[,-2]  # quitamos la última columna que incluye a las mujeres
+names(df_M) <- c("x","qx")  # necesitamos indicar que la primera columna es "x", la edad, y la segunda es "qx"
+
+df_M_Lt <- probs2lifetable(df_M[,"qx"], type = "qx", name = "PASEM 2010 Mujeres")
+
+df_Lt <- list(df_H_Lt, df_M_Lt)
+
+head(as(df_H_Lt, "data.frame"))  # HOMBRES
+head(as(df_M_Lt, "data.frame"))  # MUJERES
+```
+
+**a) Probabilidad de que el grupo se disuelva por causa del hombre (sin llegar a extinguirse) en los próximos dos años.**
+
+Usamos la *Probabilidad de disolución y no extinción dentro de los "n" años*, $_nq_{\overline{xy}}^{[1]}$. Esta probabilidad la podemos calcular fácilmente usando la *Probabilidad de no extinción*, $_np_{\overline{xy}}$, menos la *Probabilidad de supervivencia conjunta*, $_np_{xy}$:
+
+$$
+_2q_{\overline{50,49}}^{[1]} = _2p_{\overline{50,49}} - _2p_{50,49}
+$$
+
+```{r}
+(prob_diso_por_H <- pxyzt(df_Lt, x = c(50,49), t = 2, status = "last") - pxyzt(df_Lt, x = c(50,49), t = 2, status = "joint"))
+```
+
+**b) Probabilidad de extinción del grupo en los próximos dos años.**
+
+Usamos la *Probabilidad de extinción dentro de los "n" años siguientes*, $_nq_{\overline{xy}}$:
+
+$$
+_2q_{\overline{50,49}} = 1 - _2p_{\overline{50,49}}
+$$
+
+```{r}
+prob_extincion <- qxyzt(df_Lt, x = c(50,49), t = 2, status = "last")
+
+cat("  Directamente:", prob_extincion,
+    "\nComplementario:", 1 - pxyzt(df_Lt, x = c(50,49), t = 2, status = "last"))
+```
+
+**c) En base a estas probabilidades, calcula la prima única que pagaría esta pareja (de 50 años el hombre, y 49 la mujer) si contractase un seguro en el que los beneficiarios cobrasen las siguientes cantidades en los siguientes casos:**
+
+- Si el grupo se extingue durante los dos años siguientes, cobrarían 70000 euros
+- y si el grupo se disuelve por causa del hombre (pero sin llegar a extinguirse) durante los dos años siguientes, cobrarían 50000 euros.
+- En cualquiera de los dos anteriores casos, el pago de la indemnización a los beneficiarios se realizaría justo dos años después de la contratación del seguro.
+
+Datos:
+
+- Interés técnico: 1.5%
+- Tabla de vida: PASEM 2010.
+
+De manera similar al apartado 2, podemos definir la prima única que pagaría esta pareja de la siguiente manera:
+
+$$
+\text{Prima única} = 70,000 \cdot (1+1.5\%)^{-2} \cdot _2q_{\overline{50,49}} + 50,000 \cdot (1+1.5\%)^{-2} \cdot _2q_{\overline{50,49}}^{[1]}
+$$
+
+Y calculamos su valor:
+
+```{r}
+int <- 0.015
+cat("Prima única [€]:", 70000*(1+int)^(-2)*prob_extincion + 50000*(1+int)^(-2)*prob_diso_por_H)
+```
+
+**d) Cuál es la probabilidad de que la compañía aseguradora no tenga que pagar ninguna indemnización?**
+
+Esa probabilidad corresponde con la *Probabilidad de supervivencia conjunta*, $_np_{xy}$:
+
+$$
+_2p_{50,49} = _2p_{50} \cdot _2p_{49}
+$$
+
+La calculamos a continuación:
+
+```{r}
+prob_superv_conj <- pxyzt(df_Lt, x = c(50,49), t = 2, status = "joint")
+
+cat("  Directamente:", prob_superv_conj,
+    "\nComplementario:", pxt(df_H_Lt, 50, 2)*pxt(df_M_Lt, 49, 2))
+```
+
+Comprobamos que la suma de dichos escenarios del ejercicio (sus probabilidades) es la unidad:
+
+```{r}
+prob_diso_por_H + prob_extincion + prob_superv_conj
+```
+
+
+# Apartado 4 (4 puntos). Se valorará especialmente la brevedad de los cálculos
+
+**Calcula la prima pura única de un seguro de vida de las siguientes características:**
+
+- seguro pagadero a la disolución del grupo.
+- los contratantes tienen 34 años el hombre y 32 la mujer. 
+- la cobertura se extiende hasta el momento en el que el hombre alcance la edad de jubilación (65 años).
+- la indemnización será de 70000 euros, que se pagarán al final del año en que ocurra la disolución.
+
+Datos:
+
+- Interés técnico: 1.2%
+- Tabla de vida: PASEM 2010.
+
+Para este primer caso, usamos la función `Axyzn` con parámetro `status = "joint"` para calcular un seguro sobre varias vidas a la *disolución*.
+
+```{r}
+int <- 0.012
+cobertura <- 65 - 34
+cat("Prima única [€]:", 70000*Axyzn(df_Lt, x = c(34,32), i = int, n = cobertura, status = "joint"))
+```
+
+**Por último, calcula también cual sería la prima si la indemnización fuese de 70000 euros el primer año de cobertura, y a partir de ese momento, se incrementara a razón de 3000 euros anuales. Esta indemnización, al igual que antes, se pagaría al final de año de disolución del grupo.**
+
+Para este caso, podemos expresar la prima de la siguiente manera:
+
+$$
+PP = \mathop{\mathbb{E}}[Pres] = \sum_{t=0}^{n-1} u(t) \cdot (1-I_1) \cdot _{t/}q_{xy}
+$$
+
+Es decir, usando las *Probabilidades de disolución del grupo diferida "m" años y temporal "n" años*, $_{m/n}q_{xy}$, que podemos expresarla como:
+
+$$
+_{m/n}q_{xy} = _mp_{xy} - _{m+n}p_{xy}
+$$
+Y considerando que la indemnización incremental en el tiempo se puede expresar como una función $u(t)$ dependiente de $t$, tal que:
+
+$$
+u(t) = 70,000 + 30,000 \cdot t \qquad \text{para} \qquad t=0,1,2, \dots ,n-1
+$$
+
+De este modo, acumulando el valor de la prima durante los años de cobertura, teniendo en cuenta la indemnización del primer año y el incremento anual, y multiplicando por la probabilidad diferida de disolución correspondiente, obtenemos dicha expresión con un sencillo bucle FOR:
+
+
+```{r}
+prima <- 0
+for (t in 0:(cobertura-1)) {
+  prob_dife_diso <- pxyzt(df_Lt, x = c(34,32), t = t, status = "joint") - pxyzt(df_Lt, x = c(34,32), t = t+1, status = "joint")
+  prima <- prima + (70000 + 3000*t)*(1 + int)^(-(t+1))*prob_dife_diso
+}
+cat("Prima incremental [€]:", prima)
+```
